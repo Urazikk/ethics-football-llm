@@ -1,0 +1,11 @@
+pandas>=2.0
+numpy
+scikit-learn
+matplotlib
+shap
+lime
+torch
+transformers>=4.44
+peft>=0.12
+accelerate
+jupyter

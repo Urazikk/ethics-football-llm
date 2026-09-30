@@ -1,0 +1,10 @@
+data/raw/*
+!data/raw/.gitkeep
+*.csv
+*.zip
+outputs/*
+!outputs/.gitkeep
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+.venv/
