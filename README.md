@@ -27,6 +27,7 @@ ethics-football-llm/
 │   ├── fairness.py      # labels historique / corrigé, reweighing, métriques d'équité, seuils par groupe
 │   ├── prompts.py       # profils en texte, prompts valeur et décision, parsing des réponses
 │   ├── llm_methods.py   # 3 méthodes : few-shot, RAG, fine-tuning LoRA + benchmark
+│   ├── valuation.py     # ce joueur est-il surcoté ou sous-coté ? (verdict + commentaire du LLM)
 │   ├── xai.py           # LIME et SHAP appliqués au LLM, contrefactuels, substitut global
 │   └── plots.py
 ├── scripts/build_notebook.py   # régénère le notebook
@@ -70,7 +71,8 @@ python -m tests.test_pipeline ~/Downloads/archive
 4. **Réduction** : relabeling + reweighing (données), masquage de la nationalité (prompt), seuils par groupe (post-traitement).
 5. **LLM** : few-shot, RAG, LoRA, chacun en version biaisée et corrigée, plus deux ablations (masquage seul, relabeling seul). Choix du modèle par `F1(y_fair) x min(1, DI / 0,8)`.
 6. **XAI** : LIME et KernelSHAP sur P(YES), lu dans les logits du LLM. Contrefactuel « même joueur, autre nationalité ». Substitut GBM + TreeSHAP pour la vue globale.
-7. **Red teaming** : injection dans le prompt, proxy (club).
+7. **Démo interactive** : on choisit un attaquant dans un champ de saisie. Sa valeur Transfermarkt est comparée à la valeur attendue d'après sa performance : surcoté au-delà de +20 %, sous-coté en dessous de -20 %. La prime moyenne de sa confédération montre la part liée à la nationalité, et le LLM commente le verdict.
+8. **Red teaming** : injection dans le prompt, proxy (club).
 
 ## Limites
 

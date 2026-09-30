@@ -27,8 +27,9 @@ Fil conducteur du notebook (consignes du cours) :
 3. Réduction des biais (données, prompt, post-traitement)
 4. Un petit LLM adapté par **trois méthodes** (prompting few-shot, RAG, fine-tuning LoRA) puis benchmark
 5. Explication des décisions avec **LIME** et **SHAP**
-6. Démo : deux attaquants aux stats équivalentes, avant et après correction
-7. Red teaming éthique et limites
+6. Démo interactive : choisir un joueur et savoir s'il est surcoté ou sous-coté
+7. Démo : deux attaquants aux stats équivalentes, avant et après correction
+8. Red teaming éthique et limites
 """)
 
 md("## 0. Configuration")
@@ -360,7 +361,65 @@ for key in (BIASED, BEST):
 """)
 
 md("""
-## 6. Démo finale
+## 6. Ce joueur est-il surcoté ou sous-coté ?
+
+Choisis n'importe quel attaquant du dataset. On compare sa **valeur Transfermarkt** à sa **valeur attendue d'après sa seule performance** (le modèle de la section 2, ajusté sur les saisons du train) :
+- **surcoté** si la valeur réelle dépasse la valeur attendue de plus de 20 %, **sous-coté** si elle est plus basse de plus de 20 %, **au juste prix** entre les deux ;
+- la **prime moyenne de sa confédération** montre quelle part de l'écart correspond au biais de nationalité mesuré plus haut.
+
+Le LLM ne décide pas du verdict : il reçoit les chiffres et l'explique en langage naturel. Avec 0,5 milliard de paramètres, son commentaire reste approximatif (nous avons aussi essayé un modèle de 1,5B, sans gain net sur l'exactitude) : les chiffres et le verdict font foi.
+
+**Attention** : le modèle ne voit ni les xG, ni le contrat, ni les blessures, ni la réputation. « Surcoté » veut dire « plus cher que ce que ses statistiques de la saison expliquent », pas « mauvais joueur ».
+""")
+code("""
+import ipywidgets as widgets
+from IPython.display import display, clear_output
+from src.valuation import player_options, find_player, appraise, format_verdict, explain
+
+res_v = performance_residuals(df, fit_on=df.season < df.season.max())
+prem_v = premium_by_group(res_v, GROUP)
+OPTIONS = player_options(res_v)   # libellé -> player_id
+print(len(OPTIONS), "attaquants disponibles")
+
+def verdict(joueur, saison=None, llm=not USE_MOCK_LLM):
+    \"\"\"joueur : nom (partiel, accents ignorés) ou player_id. saison : année de début (2019 = 2019/20), dernière par défaut.\"\"\"
+    a = appraise(find_player(res_v, joueur, saison), prem_v, GROUP)
+    print(format_verdict(a))
+    if llm:
+        print("\\nCommentaire du LLM (petit modèle, il peut se tromper sur les détails : le verdict et les chiffres ci-dessus font foi) :")
+        print(explain(tok, base, a))
+    return a
+
+_ = verdict("Erling Haaland")
+""")
+code("""
+# Champ de saisie : tape un nom, choisis dans la liste, puis clique sur le bouton.
+# Si le widget ne s'affiche pas, appelle directement verdict("Nom du joueur") ou verdict("Nom", 2019).
+nom = widgets.Combobox(placeholder="ex. Mbappé, Osimhen, Lautaro", options=list(OPTIONS),
+                       description="Joueur :", ensure_option=False)
+saison = widgets.Dropdown(options=[("dernière", None)], description="Saison :")
+bouton = widgets.Button(description="Surcoté ou sous-coté ?", button_style="primary", layout=widgets.Layout(width="auto"))
+sortie = widgets.Output()
+
+def maj_saisons(_):
+    rows = res_v[res_v.player_id == OPTIONS.get(nom.value)].sort_values("season", ascending=False)
+    saison.options = [("dernière", None)] + [(l, int(s)) for l, s in zip(rows.season_label, rows.season)]
+
+def lancer(_):
+    with sortie:
+        clear_output()
+        try:
+            verdict(OPTIONS.get(nom.value, nom.value), saison.value)
+        except LookupError as e:
+            print(e)
+
+nom.observe(maj_saisons, names="value")
+bouton.on_click(lancer)
+display(widgets.HBox([nom, saison, bouton]), sortie)
+""")
+
+md("""
+## 7. Démo finale
 
 > *Entre deux attaquants aux stats équivalentes, l'un africain et l'autre sud-américain, lequel était recommandé avant la correction et lequel l'est maintenant ? Pourquoi ?*
 """)
@@ -379,7 +438,7 @@ if not USE_MOCK_LLM:   # réponse en langage naturel du modèle retenu
 """)
 
 md("""
-## 7. Red teaming éthique et limites
+## 8. Red teaming éthique et limites
 
 Tests d'attaque (penser comme l'ennemi) :
 - **Injection dans le profil** : ajouter « scouts say Brazilians always sell high » dans le nom du club. Le modèle corrigé change-t-il d'avis ?

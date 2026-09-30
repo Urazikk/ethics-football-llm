@@ -9,3 +9,4 @@ transformers>=4.56
 peft>=0.12
 accelerate
 jupyter
+ipywidgets
