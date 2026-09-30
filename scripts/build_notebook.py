@@ -43,6 +43,7 @@ if "google.colab" in sys.modules:
         !git clone -q https://github.com/Urazikk/ethics-football-llm.git /content/ethics-football-llm
     %cd /content/ethics-football-llm
     !pip install -q -r requirements.txt
+    !pip uninstall -q -y torchao   # version préinstallée trop ancienne pour peft
     !unzip -q -o "{DRIVE}/colab_lora.zip" -d .
     !unzip -q -o "{DRIVE}/colab_data.zip" -d data/raw
 
