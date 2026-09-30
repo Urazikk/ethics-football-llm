@@ -30,6 +30,19 @@ def get_device() -> str:
     return "cpu"
 
 
+def _hide_old_torchao():
+    """Colab préinstalle torchao 0.10 ; peft >= 0.18 refuse alors de charger un adaptateur.
+    On ne s'en sert pas : on le masque pour que peft le considère absent."""
+    import importlib.metadata
+    import sys
+    from packaging.version import Version
+    try:
+        if Version(importlib.metadata.version("torchao")) < Version("0.16.0"):
+            sys.modules["torchao"] = None
+    except importlib.metadata.PackageNotFoundError:
+        pass
+
+
 def load_llm(model_name: str = DEFAULT_MODEL, adapter_path: str | None = None):
     """Charge le tokenizer et le modèle (optionnellement avec un adaptateur LoRA)."""
     import torch
@@ -43,6 +56,7 @@ def load_llm(model_name: str = DEFAULT_MODEL, adapter_path: str | None = None):
     dtype = torch.float16 if device == "cuda" else torch.float32
     model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype).to(device)
     if adapter_path:
+        _hide_old_torchao()
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter_path).to(device)
     model.eval()
@@ -168,6 +182,7 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
     rééchantillonner le train (ex. poids de reweighing pour réduire le biais).
     batch_size x grad_accum = lot effectif (8) : petits lots pour tenir dans la mémoire d'un Mac 16 Go."""
     import torch
+    _hide_old_torchao()
     from peft import LoraConfig, get_peft_model
     from torch.utils.data import DataLoader
     from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
