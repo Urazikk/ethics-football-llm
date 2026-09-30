@@ -33,10 +33,18 @@ Fil conducteur du notebook (consignes du cours) :
 
 md("## 0. Configuration")
 code("""
-# Sur Colab : décommenter
-# !git clone https://github.com/<ton-compte>/ethics-football-llm.git
-# %cd ethics-football-llm
-# !pip install -q -r requirements.txt
+import os, sys
+# Sur Colab : clone du repo, dépendances, données et adaptateurs LoRA depuis Drive
+if "google.colab" in sys.modules:
+    from google.colab import drive
+    drive.mount("/content/drive")
+    DRIVE = "/content/drive/MyDrive/01_ECE/ING4_2025-2026/Ethics of AI/Projet"
+    if not os.path.exists("/content/ethics-football-llm"):
+        !git clone -q https://github.com/Urazikk/ethics-football-llm.git /content/ethics-football-llm
+    %cd /content/ethics-football-llm
+    !pip install -q -r requirements.txt
+    !unzip -q -o "{DRIVE}/colab_lora.zip" -d .
+    !unzip -q -o "{DRIVE}/colab_data.zip" -d data/raw
 
 import os, sys, warnings
 from pathlib import Path
