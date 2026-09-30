@@ -161,11 +161,12 @@ def pick_few_shot(train: pd.DataFrame, n: int = 6, seed: int = 0, label_col: str
 def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir: str = "outputs/lora",
                   epochs: int = 2, lr: float = 2e-4, r: int = 16, max_rows: int | None = 3000, seed: int = 42,
                   task: str = "value", label_col: str | None = None, threshold_m: float = 10,
-                  hide: tuple = (), sample_weight: str | None = None):
+                  hide: tuple = (), sample_weight: str | None = None, batch_size: int = 4, grad_accum: int = 2):
     """Fine-tuning LoRA supervisé : la perte n'est calculée que sur la réponse de l'assistant.
 
     task='decision' : entraîne sur label_col (0/1). sample_weight : colonne de poids utilisée pour
-    rééchantillonner le train (ex. poids de reweighing pour réduire le biais)."""
+    rééchantillonner le train (ex. poids de reweighing pour réduire le biais).
+    batch_size x grad_accum = lot effectif (8) : petits lots pour tenir dans la mémoire d'un Mac 16 Go."""
     import torch
     from peft import LoraConfig, get_peft_model
     from torch.utils.data import DataLoader
@@ -173,6 +174,10 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
 
     torch.manual_seed(seed)
     device = get_device()
+    if device == "mps":   # libère le cache laissé par les inférences précédentes du notebook
+        import gc
+        gc.collect()
+        torch.mps.empty_cache()
     tok = AutoTokenizer.from_pretrained(model_name)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -208,16 +213,18 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
             att[i, :len(x)] = 1
         return ids, att, lab
 
-    dl = DataLoader(samples, batch_size=8, shuffle=True, collate_fn=collate)
+    dl = DataLoader(samples, batch_size=batch_size, shuffle=True, collate_fn=collate)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    sched = get_linear_schedule_with_warmup(opt, int(0.05 * len(dl) * epochs), len(dl) * epochs)
+    n_updates = -(-len(dl) // grad_accum) * epochs
+    sched = get_linear_schedule_with_warmup(opt, int(0.05 * n_updates), n_updates)
     model.train()
     for ep in range(epochs):
         tot = 0.0
         for step, (ids, att, lab) in enumerate(dl):
             loss = model(input_ids=ids.to(device), attention_mask=att.to(device), labels=lab.to(device)).loss
-            loss.backward()
-            opt.step(); sched.step(); opt.zero_grad()
+            (loss / grad_accum).backward()
+            if (step + 1) % grad_accum == 0 or step + 1 == len(dl):
+                opt.step(); sched.step(); opt.zero_grad()
             tot += loss.item()
             if step % 50 == 0:
                 print(f"epoch {ep} step {step}/{len(dl)} loss {loss.item():.4f}")
