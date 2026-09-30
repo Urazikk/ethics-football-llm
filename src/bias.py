@@ -20,14 +20,19 @@ def _design(df: pd.DataFrame, extra_cat: list[str] | None = None) -> pd.DataFram
     return X
 
 
-def performance_residuals(df: pd.DataFrame, control_club: bool = False) -> pd.DataFrame:
+def performance_residuals(df: pd.DataFrame, control_club: bool = False,
+                          fit_on: pd.Series | None = None) -> pd.DataFrame:
     """Ajoute 'expected_log_value' (performance seule) et 'residual' (prime inexpliquée).
 
     control_club=True ajoute un effet fixe club : on compare alors des joueurs d'un même club,
     ce qui retire la part de la prime due au fait de jouer dans un grand club (facteur confondant).
+    fit_on : masque booléen des lignes servant à ajuster la régression (ex. le train, pour éviter
+    la fuite du test). Les saisons absentes de l'ajustement reprennent l'effet de la dernière saison vue.
     """
-    X = _design(df, extra_cat=["club_id"] if control_club else None)
-    reg = LinearRegression().fit(X, df["log_value"])
+    fit = pd.Series(True, index=df.index) if fit_on is None else fit_on.reindex(df.index).fillna(False).astype(bool)
+    last = df.loc[fit, "season"].max()
+    X = _design(df.assign(season=df["season"].clip(upper=last)), extra_cat=["club_id"] if control_club else None)
+    reg = LinearRegression().fit(X[fit], df.loc[fit, "log_value"])
     out = df.copy()
     out["expected_log_value"] = reg.predict(X)
     out["residual"] = out["log_value"] - out["expected_log_value"]

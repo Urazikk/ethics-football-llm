@@ -41,7 +41,7 @@ def load_llm(model_name: str = DEFAULT_MODEL, adapter_path: str | None = None):
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     dtype = torch.float16 if device == "cuda" else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype).to(device)
+    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype).to(device)
     if adapter_path:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter_path).to(device)
@@ -93,8 +93,10 @@ class LLMPredictor:
         Plus stable que la génération, et donne un score continu (utile pour LIME / SHAP et les seuils)."""
         import torch
         rows = df.to_dict("records") if isinstance(df, pd.DataFrame) else df
-        yes = self.tok.encode(" YES", add_special_tokens=False)[0]
-        no = self.tok.encode(" NO", add_special_tokens=False)[0]
+        yes_ids = self.tok.encode(" YES", add_special_tokens=False)
+        no_ids = self.tok.encode(" NO", add_special_tokens=False)
+        assert len(yes_ids) == 1 and len(no_ids) == 1, "' YES' / ' NO' doivent être des tokens uniques"
+        yes, no = yes_ids[0], no_ids[0]
         probs = []
         for i in range(0, len(rows), self.batch_size):
             batch = rows[i:i + self.batch_size]
@@ -174,7 +176,7 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
     tok = AutoTokenizer.from_pretrained(model_name)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32).to(device)
+    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float32).to(device)
     model = get_peft_model(model, LoraConfig(r=r, lora_alpha=2 * r, lora_dropout=0.05, task_type="CAUSAL_LM",
                                              target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]))
     model.print_trainable_parameters()

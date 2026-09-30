@@ -5,7 +5,7 @@ matplotlib
 shap
 lime
 torch
-transformers>=4.44
+transformers>=4.56
 peft>=0.12
 accelerate
 jupyter

@@ -45,9 +45,13 @@ _, _, fid = surrogate_shap(test[enc.features], np.log10(mp.predict(test)))
 print("surrogate fidelity", fid)
 
 # mode décision
-lab = make_decision_labels(df, 10)
+lab = make_decision_labels(df, 10, fit_on=df.season < df.season.max())
 tr, te = temporal_split(lab)
-tr = tr.assign(weight=reweighing(tr, "confederation", "y_hist"))
+# y_fair ajusté sur le train seulement : la saison de test ne doit pas influencer la régression
+full = make_decision_labels(df, 10)
+assert not np.allclose(lab.loc[te.index, "expected_log_value"], full.loc[te.index, "expected_log_value"])
+assert np.isfinite(lab["expected_log_value"]).all()
+tr = tr.assign(weight=reweighing(tr, "confederation", "y_fair"))
 biased = MockPredictor(tr, "decision", "y_hist")
 blind = MockPredictor(tr.assign(), "decision", "y_fair", hide=("nationality",))
 te = te.assign(pred_biased=biased.predict(te), pred_fair=blind.predict(te))

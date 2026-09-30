@@ -17,8 +17,9 @@ import pandas as pd
 from .bias import performance_residuals
 
 
-def make_decision_labels(df: pd.DataFrame, threshold_m: float = 10) -> pd.DataFrame:
-    out = performance_residuals(df)
+def make_decision_labels(df: pd.DataFrame, threshold_m: float = 10, fit_on: pd.Series | None = None) -> pd.DataFrame:
+    """fit_on : lignes utilisées pour ajuster le modèle de performance de y_fair (le train seulement)."""
+    out = performance_residuals(df, fit_on=fit_on)
     thr = np.log10(threshold_m * 1e6)
     out["y_hist"] = (out["log_value"] >= thr).astype(int)
     out["y_fair"] = (out["expected_log_value"] >= thr).astype(int)

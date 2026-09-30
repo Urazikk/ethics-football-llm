@@ -52,6 +52,8 @@ export DATA_DIR=~/Downloads/archive
 jupyter notebook notebooks/projet_recrutement_llm.ipynb
 ```
 
+**VS Code** : installer les extensions Python et Jupyter (proposées à l'ouverture du dossier), ouvrir le notebook et choisir le noyau `.venv`. Le dossier `.vscode/` pointe déjà vers ce venv. Sur Mac Apple Silicon, le LLM tourne sur le GPU (MPS).
+
 **Matériel** : le LLM (Qwen2.5-0.5B-Instruct) tourne sur Colab (GPU T4 gratuit) ou sur Mac Apple Silicon (MPS). Le fine-tuning LoRA prend environ 10 min par modèle sur T4. Réduire `N_EVAL` pour aller plus vite.
 
 **Test rapide sans GPU** : `USE_MOCK_LLM=1` remplace le LLM par un GBM, pour vérifier que tout le pipeline tourne.
@@ -66,9 +68,9 @@ python -m tests.test_pipeline ~/Downloads/archive
 2. **Biais** : la valeur (log10) est expliquée par la performance seule (buts/90, passes/90, minutes, matchs, âge, championnat, saison). Le résidu moyen par nationalité mesure la prime inexpliquée.
 3. **Labels** : `y_hist` (valeur réelle ≥ 10 M€, biaisé) et `y_fair` (valeur attendue par la performance ≥ 10 M€).
 4. **Réduction** : relabeling + reweighing (données), masquage de la nationalité (prompt), seuils par groupe (post-traitement).
-5. **LLM** : few-shot, RAG, LoRA, chacun en version biaisée et corrigée. Choix du modèle par `F1(y_fair) x min(1, DI / 0,8)`.
+5. **LLM** : few-shot, RAG, LoRA, chacun en version biaisée et corrigée, plus deux ablations (masquage seul, relabeling seul). Choix du modèle par `F1(y_fair) x min(1, DI / 0,8)`.
 6. **XAI** : LIME et KernelSHAP sur P(YES), lu dans les logits du LLM. Contrefactuel « même joueur, autre nationalité ». Substitut GBM + TreeSHAP pour la vue globale.
-7. **Red teaming** : injection dans le prompt, proxys (club, nom).
+7. **Red teaming** : injection dans le prompt, proxy (club).
 
 ## Limites
 
