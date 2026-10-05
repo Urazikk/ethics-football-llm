@@ -229,6 +229,49 @@ Les versions corrigées apprennent \texttt{y\_fair} et sont notées sur \texttt{
 « Notre évaluation est en partie circulaire, on le sait. On montre donc les deux F1 : celle du mérite sportif et celle des décisions historiques. L'écart, c'est le prix de l'équité. »
 \end{oral}
 
+\section{Ce que disent les résultats}
+Résultats du run Colab, sur 300 joueurs de la saison 2025/26.
+
+\subsection{Les trois méthodes}
+\begin{tabularx}{\linewidth}{@{}X r r r r@{}}
+\toprule
+Version corrigée & F1 (mérite) & AUC & Param. entraînés & Inférence / 100 \\
+\midrule
+LoRA & 0,839 & 0,990 & 2,2 M & 1,1 s \\
+Fine-tuning complet & 0,725 & 0,964 & 494 M & 1,0 s \\
+Distillation & 0,737 & 0,968 & 255 M & 0,5 s \\
+Few-shot (référence) & 0,644 & 0,697 & 0 & 3,0 s \\
+\bottomrule
+\end{tabularx}
+
+\textbf{LoRA gagne} : meilleure F1 avec 200 fois moins de paramètres entraînés. Le fine-tuning complet surapprend avec peu de données. L'élève distillé fait presque aussi bien que son professeur, deux fois plus vite.
+
+\subsection{Mérite ou parité ?}
+\begin{tabularx}{\linewidth}{@{}X r r@{}}
+\toprule
+ & Disparate impact & Exactitude (mérite) \\
+\midrule
+Modèle biaisé (LoRA) & 0,83 & 0,80 \\
+Modèle corrigé (LoRA) & 0,62 & 0,88 \\
+Corrigé + seuils par groupe & 0,94 & 0,87 \\
+\bottomrule
+\end{tabularx}
+
+Le modèle corrigé est le plus fidèle au mérite et il ne réagit plus à la nationalité ni au club. Pourtant son disparate impact baisse : sur la saison test, les Sud-Américains ont en moyenne de meilleures stats, donc un modèle fidèle au mérite les sélectionne plus souvent. Avec des seuils par groupe, on retrouve la parité pour un point d'exactitude.
+
+\begin{simple}
+« Juste » peut vouloir dire deux choses : traiter chacun selon son mérite (égalité des chances), ou sélectionner chaque groupe aussi souvent (parité). Les deux ne coïncident pas ici. Ce n'est pas un bug, c'est un choix éthique, et le projet le rend visible.
+\end{simple}
+
+\subsection{Le club, proxy de la nationalité}
+\begin{itemize}
+  \item Gervinho et Higuaín : modèle biaisé 3 \% contre 60 \%, modèle corrigé 1 \% contre 3 \%. Selon leurs stats, aucun des deux ne mérite la short-list.
+  \item SHAP sur le modèle biaisé : la nationalité pèse peu en direct. L'écart est dans la valeur de base, fixée par le club (non perturbé) : 0,08 à Parme, 0,77 à la Juventus.
+  \item Contrefactuel club : le même joueur passe de 0,01 au Chievo à 0,20 à l'Inter, le club qui compte le plus de Sud-Américains. Le modèle corrigé reste autour de 0,02.
+  \item Contrefactuel nationalité : Higuaín passe de 60 \% à 48 \% avec la nationalité ivoirienne dans le modèle biaisé ; le modèle corrigé reste à 2,7 \% quelle que soit la nationalité.
+  \item LIME donne un petit poids à la nationalité même pour le modèle corrigé, dont la sortie ne bouge pourtant pas : c'est l'approximation locale de LIME, que le cours signale.
+\end{itemize}
+
 \section{Expliquer les décisions : XAI}
 \subsection{LIME}
 \emph{Local Interpretable Model-agnostic Explanations}. Question : « sur quelles variables repose cette décision ? ».
@@ -317,6 +360,10 @@ Méthode du cours : penser comme un attaquant.
   LIME approxime localement par un modèle linéaire, rapide mais instable. SHAP répartit exactement la prédiction entre les variables selon Shapley, plus lent mais plus rigoureux.
   \item[Pourquoi un si petit modèle ?]
   Contrainte de calcul (Colab gratuit) et sobriété : on reste sur un modèle « manipulable » comme demandé, que l'on peut fine-tuner entièrement.
+  \item[Pourquoi votre modèle corrigé a-t-il un disparate impact plus faible ?]
+  Parce qu'il suit le mérite : sur la saison test, les Sud-Américains ont de meilleures stats. Il est invariant à la nationalité et au club. Si l'on veut la parité, les seuils par groupe donnent 0,94 pour un point d'exactitude. C'est l'arbitrage égalité des chances contre parité.
+  \item[Pourquoi LoRA bat le fine-tuning complet ?]
+  Avec quelques milliers d'exemples, ajuster 494 millions de paramètres surapprend. LoRA contraint l'adaptation, ce qui régularise : c'est l'outil de choix cité en cours.
   \item[Votre évaluation n'est-elle pas biaisée en faveur des modèles corrigés ?]
   Si, en partie : on l'assume et on affiche aussi la F1 par rapport aux décisions historiques.
 \end{description}

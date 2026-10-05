@@ -178,50 +178,67 @@ pres.addSection({ title: "Méthode" });
   s.addNotes("SIMON (50 s). Le LLM est Qwen2.5 0,5 milliard, il tourne sur un GPU Colab. On l'adapte avec les trois méthodes vues en cours : fine-tuning complet, LoRA, et distillation, où un élève de 8 couches imite le modèle fine-tuné. Chacune existe en version biaisée, sur les labels historiques, et corrigée. Few-shot et RAG servent de références sans entraînement.");
 }
 {
-  const s = newSlide("CLAIR_CONTENU", "Méthode", "06 · Benchmark", "Performance, équité, efficacité", "Simon");
-  const hdr = ["Méthode (version corrigée)", "F1 vs y_fair", "Disparate impact", "Paramètres entraînés", "Entraînement"].map(t => ({ text: t, options: { bold: true, color: "FFFFFF", fill: { color: HEX.pitch }, fontSize: 12 } }));
-  const rows = [["Fine-tuning complet", "à venir", "à venir", "494 M", "à venir"], ["LoRA", "à venir", "à venir", "2,2 M", "à venir"], ["Distillation", "à venir", "à venir", "≈ 255 M", "à venir"], ["Few-shot (référence)", "à venir", "à venir", "0", "0"]]
-    .map((r, i) => r.map(t => ({ text: t, options: { fontSize: 12, color: HEX.ink, fill: { color: i % 2 ? "FFFFFF" : HEX.pale } } })));
-  s.addTable([hdr, ...rows], { x: 0.6, y: 1.6, w: 8.8, colW: [2.6, 1.4, 1.6, 1.7, 1.5], rowH: 0.42, fontFace: "Calibri", border: { type: "solid", pt: 0.5, color: HEX.rule }, valign: "middle", objectName: "tableau_benchmark" });
-  card(s, 0.6, 3.95, 8.8, 0.85, "EEF3EA", "critere");
-  txt(s, [{ text: "Critère de choix  ", options: { bold: true, color: C.accent1 } }, { text: "score = F1(y_fair) × min(1, DI / 0,8). À score proche, le modèle le plus léger.", options: { color: C.text1 } }], { x: 0.8, y: 4.05, w: 8.4, h: 0.65, fontSize: 14, valign: "middle" });
-  s.addNotes("SIMON (60 s). [Chiffres à compléter après le run Colab.] On compare la F1 par rapport au label corrigé, le disparate impact, et l'efficacité : paramètres entraînés et temps d'entraînement. Le critère est explicite : la F1, pénalisée si le disparate impact passe sous 0,8. Point d'honnêteté : les versions corrigées sont notées sur le label qu'elles apprennent, donc on regarde aussi la F1 sur le label historique.");
+  const s = newSlide("CLAIR_CONTENU", "Méthode", "06 · Benchmark", "Trois méthodes comparées", "Simon");
+  const H = (t) => ({ text: t, options: { bold: true, color: "FFFFFF", fill: { color: HEX.pitch }, fontSize: 12 } });
+  const hdr = ["Version corrigée", "F1 (mérite)", "AUC", "Param. entraînés", "Entraînement", "Inférence / 100"].map(H);
+  const data = [["LoRA", "0,839", "0,990", "2,2 M", "≈ 10 min*", "1,1 s"], ["Fine-tuning complet", "0,725", "0,964", "494 M", "8,8 min", "1,0 s"],
+                ["Distillation", "0,737", "0,968", "255 M", "5,1 min", "0,5 s"], ["Few-shot (référence)", "0,644", "0,697", "0", "0", "3,0 s"]];
+  const rows = data.map((r, i) => r.map((t, j) => ({ text: t, options: { fontSize: 12, bold: i === 0 && j < 3, color: HEX.ink, fill: { color: i === 0 ? "DDEBD0" : (i % 2 ? "FFFFFF" : HEX.pale) } } })));
+  s.addTable([hdr, ...rows], { x: 0.6, y: 1.6, w: 8.8, colW: [2.3, 1.2, 1.0, 1.5, 1.4, 1.4], rowH: 0.42, fontFace: "Calibri", border: { type: "solid", pt: 0.5, color: HEX.rule }, valign: "middle", objectName: "tableau_benchmark" });
+  card(s, 0.6, 3.95, 8.8, 0.8, "EEF3EA", "retenu");
+  txt(s, [{ text: "Retenu : LoRA corrigé.  ", options: { bold: true, color: C.accent1 } }, { text: "Meilleure F1 avec 200 fois moins de paramètres entraînés que le fine-tuning complet. L'élève distillé est 2 fois plus rapide en inférence.", options: { color: C.text1 } }], { x: 0.8, y: 4.02, w: 8.4, h: 0.66, fontSize: 13, valign: "middle" });
+  txt(s, "* adaptateurs entraînés lors d'un run précédent. F1 et AUC mesurées par rapport au label corrigé, sur 300 joueurs de la saison 2025/26.", { x: 0.6, y: 4.83, w: 8.8, h: 0.25, fontSize: 10, color: C.accent5 });
+  s.addNotes("SIMON (50 s). Sur la saison test, LoRA corrigé obtient la meilleure F1, 0,84, avec une AUC de 0,99, en n'entraînant que 2,2 millions de paramètres. Le fine-tuning complet, qui ajuste les 494 millions, fait moins bien : avec peu de données, il surapprend, ce qui rejoint le cours, LoRA est l'outil de choix pour expérimenter. L'élève distillé fait presque aussi bien que son professeur, avec moitié moins de paramètres et une inférence deux fois plus rapide. Tous écrasent le few-shot.");
 }
 {
-  const s = newSlide("CLAIR_CONTENU", "Méthode", "07 · Explicabilité", "LIME et SHAP sur le LLM", "Simon");
-  [["LIME", "Quelles variables portent cette décision ?", "Perturbe le profil, refait le prompt, ajuste un modèle linéaire local."],
-   ["SHAP", "Combien chaque variable pèse-t-elle ?", "Valeurs de Shapley : contribution de chaque variable par rapport à la moyenne."]].forEach(([a, q, d], i) => {
-    const x = 0.6 + i * 4.5;
-    card(s, x, 1.6, 4.3, 1.45, "EEF3EA", `xai_${i}`);
-    big(s, a, { x: x + 0.2, y: 1.7, w: 1.4, h: 0.6, fontSize: 30, color: C.accent1 });
-    txt(s, q, { x: x + 1.6, y: 1.75, w: 2.55, h: 0.55, fontSize: 14, bold: true, color: C.text1, valign: "middle" });
-    txt(s, d, { x: x + 0.2, y: 2.35, w: 3.9, h: 0.6, fontSize: 13, color: C.text1, valign: "top" });
+  const s = newSlide("CLAIR_CONTENU", "Méthode", "07 · Équité", "Mérite ou parité ?", "Simon");
+  const cards = [["Modèle biaisé", "0,83", "0,80", "Apprend les valeurs du marché, préjugés compris"],
+                 ["Modèle corrigé", "0,62", "0,88", "Suit le mérite sportif : invariant à la nationalité et au club"],
+                 ["Corrigé + seuils par groupe", "0,94", "0,87", "Parité retrouvée pour 1 point d'exactitude"]];
+  cards.forEach(([a, di, acc, d], i) => {
+    const x = 0.6 + i * 3.0, dark = i === 2;
+    card(s, x, 1.6, 2.8, 2.6, dark ? "1F4A1A" : "EEF3EA", `equite_${i}`);
+    txt(s, a, { x: x + 0.2, y: 1.72, w: 2.4, h: 0.35, fontSize: 15, bold: true, color: dark ? C.background1 : C.accent1 });
+    big(s, di, { x: x + 0.2, y: 2.1, w: 1.2, h: 0.65, fontSize: 36, color: dark ? C.accent6 : C.accent1 });
+    txt(s, "disparate impact", { x: x + 0.2, y: 2.75, w: 1.2, h: 0.3, fontSize: 10, color: dark ? C.accent6 : C.accent5 });
+    big(s, acc, { x: x + 1.4, y: 2.1, w: 1.2, h: 0.65, fontSize: 36, color: dark ? C.background1 : C.text1 });
+    txt(s, "exactitude (mérite)", { x: x + 1.4, y: 2.75, w: 1.2, h: 0.3, fontSize: 10, color: dark ? C.accent6 : C.accent5 });
+    txt(s, d, { x: x + 0.2, y: 3.15, w: 2.4, h: 0.95, fontSize: 13, color: dark ? C.background2 : C.text1, valign: "top" });
   });
-  s.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 3.25, w: 8.8, h: 1.65, fill: { color: "FFFFFF" }, line: { color: HEX.rule, dashType: "dash", width: 1 }, objectName: "emplacement_figure_shap" });
-  txt(s, "Emplacement figure : SHAP waterfall avant / après correction (notebook, section 5.2)", { x: 0.8, y: 3.3, w: 8.4, h: 1.55, fontSize: 13, color: C.accent5, align: "center", valign: "middle" });
-  s.addNotes("SIMON (60 s). Le LLM lit du texte, donc on encode le profil en variables, on les perturbe, on reconstruit un prompt à chaque fois et on lit P(YES). LIME donne les variables qui portent la décision localement, SHAP la contribution de chacune. [Commenter la figure : poids de la nationalité avant, puis après correction.] Limite assumée : une explication n'est pas une justification.");
+  txt(s, [{ text: "Pourquoi le corrigé passe sous 0,8 : ", options: { bold: true, color: C.accent1 } }, { text: "sur la saison test, les attaquants sud-américains ont en moyenne de meilleures stats. Un modèle fidèle au mérite les sélectionne donc plus souvent. Égalité des chances ou parité stricte : un choix éthique à assumer.", options: { color: C.text1 } }],
+    { x: 0.6, y: 4.35, w: 8.8, h: 0.75, fontSize: 13, valign: "top" });
+  s.addNotes("SIMON (60 s). Résultat contre-intuitif, et c'est le cœur éthique du projet. Le modèle corrigé est plus juste au sens du mérite : 88 % d'exactitude, et il ne bouge plus quand on change la nationalité ou le club. Pourtant son disparate impact tombe à 0,62. Pourquoi ? Parce que sur la saison test, les Sud-Américains ont réellement de meilleures stats : un modèle fidèle au mérite les sélectionne plus. Si on veut la parité stricte, on ajoute des seuils par groupe : 0,94 de disparate impact pour seulement un point d'exactitude en moins. Le choix entre égalité des chances et parité n'est pas technique, il est éthique, et on le rend explicite.");
 }
-
+{
+  const s = newSlide("CLAIR_CONTENU", "Méthode", "08 · Explicabilité", "SHAP : le club fait le prix", "Simon");
+  s.addImage({ path: "img/shap_gervinho_biaise.png", x: 0.6, y: 1.5, w: 4.3, h: 2.47, objectName: "shap_gervinho" });
+  s.addImage({ path: "img/shap_higuain_biaise.png", x: 5.1, y: 1.5, w: 4.3, h: 2.53, objectName: "shap_higuain" });
+  card(s, 0.6, 4.15, 8.8, 0.85, "EEF3EA", "lecture_shap");
+  txt(s, [{ text: "Modèle biaisé. ", options: { bold: true, color: C.accent1 } }, { text: "La nationalité ne pèse presque rien en direct. L'écart est dans la valeur de base, fixée par le club : 0,08 à Parme, 0,77 à la Juventus. Contrefactuel : même joueur à l'Inter 0,20, au Chievo 0,01. Le club sert de proxy. Le modèle corrigé reste à 0,02 partout.", options: { color: C.text1 } }],
+    { x: 0.8, y: 4.2, w: 8.4, h: 0.75, fontSize: 12, valign: "middle" });
+  s.addNotes("SIMON (60 s). SHAP sur le modèle biaisé, pour Gervinho à gauche et Higuaín à droite. Surprise : la nationalité ne pèse presque rien directement. Tout l'écart est dans la valeur de base, qui dépend du club, que nous ne perturbons pas : 0,08 à Parme, 0,77 à la Juventus. Le contrefactuel le confirme : le même joueur passe de 0,01 au Chievo à 0,20 à l'Inter, le club où il y a le plus de Sud-Américains. Le biais passe par un proxy, exactement le piège décrit en cours. Le modèle corrigé, lui, reste autour de 0,02 quel que soit le club ou la nationalité. Petite remarque : LIME attribue un poids à la nationalité même pour le modèle corrigé, alors que sa sortie ne bouge pas, c'est l'approximation locale de LIME, que le cours signale.");
+}
 // ================= SECTION 3 : démo et limites (Mathis) =================
 pres.addSection({ title: "Démo et limites" });
 {
-  const s = newSlide("PELOUSE_CONTENU", "Démo et limites", "08 · Démo finale", "Gervinho contre Higuaín", "Mathis");
+  const s = newSlide("PELOUSE_CONTENU", "Démo et limites", "09 · Démo finale", "Gervinho contre Higuaín", "Mathis");
   txt(s, "Serie A 2019/20 · 6 buts · 4 passes chacun · probabilité d'entrer dans la short-list", { x: 0.6, y: 1.55, w: 8.8, h: 0.4, fontSize: 16, color: C.accent6 });
-  [["GERVINHO", "Côte d'Ivoire · Parme", "Avec la nationalité argentine", 0.6], ["HIGUAÍN", "Argentine · Juventus", "Avec la nationalité ivoirienne", 5.1]].forEach(([n, sub, swap, x], i) => {
+  [["GERVINHO", "Côte d'Ivoire · Parme", "0,03", "0,01", "Mérite la short-list selon ses stats : non", 0.6],
+   ["HIGUAÍN", "Argentine · Juventus", "0,60", "0,03", "Mérite la short-list selon ses stats : non", 5.1]].forEach(([n, sub, pb, pf, foot, x], i) => {
     card(s, x, 2.1, 4.3, 2.75, "0F2A0C", `demo_${i}`);
     big(s, n, { x: x + 0.25, y: 2.22, w: 3.8, h: 0.5, fontSize: 28, color: C.background1 });
     txt(s, sub, { x: x + 0.25, y: 2.72, w: 3.8, h: 0.3, fontSize: 12, color: C.accent6 });
-    [["Modèle biaisé", C.accent3], ["Modèle corrigé", C.background1]].forEach(([lab, col], j) => {
-      const y = 3.15 + j * 0.45;
-      txt(s, lab, { x: x + 0.25, y, w: 2.6, h: 0.35, fontSize: 13, color: C.background2, valign: "middle" });
-      big(s, "à venir", { x: x + 2.85, y, w: 1.2, h: 0.35, fontSize: 20, color: col, align: "right", valign: "middle" });
+    [["Modèle biaisé", pb, C.accent3], ["Modèle corrigé", pf, C.background1]].forEach(([lab, v, col], j) => {
+      const y = 3.12 + j * 0.5;
+      txt(s, lab, { x: x + 0.25, y, w: 2.4, h: 0.4, fontSize: 13, color: C.background2, valign: "middle" });
+      big(s, v, { x: x + 2.65, y, w: 1.4, h: 0.4, fontSize: 26, color: col, align: "right", valign: "middle" });
     });
-    txt(s, [{ text: swap + " (biaisé) : ", options: { color: C.accent6 } }, { text: "à venir", options: { bold: true, color: C.accent3 } }], { x: x + 0.25, y: 4.18, w: 3.8, h: 0.5, fontSize: 12, valign: "middle" });
+    txt(s, foot, { x: x + 0.25, y: 4.2, w: 3.8, h: 0.45, fontSize: 12, italic: true, color: C.accent6, valign: "middle" });
   });
-  s.addNotes("MATHIS (50 s). Plutôt qu'un profil inventé, on reprend notre vraie paire : Gervinho et Higuaín, mêmes stats. Avec le modèle biaisé, [chiffres] : Higuaín est favorisé. Avec le modèle corrigé, [chiffres] : les deux sont traités de la même façon. Et si on donne à Gervinho la nationalité argentine, sans rien changer d'autre, le modèle biaisé [chiffre] : c'est la preuve que la nationalité seule faisait la différence. SHAP, qu'a montré Simon, explique pourquoi.");
+  s.addNotes("MATHIS (50 s). Notre vraie paire : Gervinho et Higuaín, mêmes stats, et selon leurs stats aucun des deux ne mérite la short-list. Le modèle biaisé donne 3 % à Gervinho et 60 % à Higuaín : vingt fois plus. Le modèle corrigé leur donne 1 % et 3 % : ils sont traités pareil, et conformément à leur niveau. Comme Simon l'a montré avec SHAP, l'écart du modèle biaisé venait surtout du club, et en partie de la nationalité : Higuaín passe de 60 à 48 % si on lui donne la nationalité ivoirienne.");
 }
 {
-  const s = newSlide("PELOUSE_CONTENU", "Démo et limites", "09 · Bonus interactif", "Surcoté ou sous-coté ?", "Mathis");
+  const s = newSlide("PELOUSE_CONTENU", "Démo et limites", "10 · Bonus interactif", "Surcoté ou sous-coté ?", "Mathis");
   txt(s, "N'importe quel attaquant, n'importe quelle saison : sa valeur Transfermarkt face à la valeur que justifient ses stats.", { x: 0.6, y: 1.55, w: 8.8, h: 0.7, fontSize: 16, color: C.background2 });
   [["SURCOTÉ", "> +20 %", C.accent3], ["JUSTE PRIX", "± 20 %", C.background1], ["SOUS-COTÉ", "< -20 %", C.accent6]].forEach(([a, b, col], i) => {
     const x = 0.6 + i * 3.0;
@@ -229,11 +246,11 @@ pres.addSection({ title: "Démo et limites" });
     big(s, a, { x: x + 0.2, y: 2.62, w: 2.4, h: 0.55, fontSize: 26, color: col });
     txt(s, b, { x: x + 0.2, y: 3.25, w: 2.4, h: 0.4, fontSize: 15, color: C.background2 });
   });
-  txt(s, "Le LLM commente le verdict en langage naturel, avec la part de l'écart liée à la prime de la confédération.", { x: 0.6, y: 4.25, w: 8.8, h: 0.6, fontSize: 13, italic: true, color: C.accent6 });
-  s.addNotes("MATHIS (40 s). En bonus, un widget dans le notebook : on choisit un joueur et une saison, et on compare sa valeur Transfermarkt à la valeur que justifient ses stats. Au-delà de +20 % il est surcoté, en dessous de -20 % sous-coté. [Démo live possible : un joueur connu.]");
+  txt(s, [{ text: "Exemple : Erling Haaland 2025/26. ", options: { bold: true, color: C.background1 } }, { text: "200 M€ sur Transfermarkt, 164 M€ justifiés par ses stats (27 buts, 8 passes) : surcoté de 22 %. Le LLM commente ensuite le verdict.", options: { color: C.accent6 } }], { x: 0.6, y: 4.2, w: 8.8, h: 0.65, fontSize: 13 });
+  s.addNotes("MATHIS (40 s). En bonus, un widget dans le notebook : on choisit un joueur et une saison, et on compare sa valeur Transfermarkt à la valeur que justifient ses stats. Au-delà de +20 % il est surcoté, en dessous de -20 % sous-coté. Exemple : Haaland 2025/26, 200 millions sur Transfermarkt pour 164 justifiés par ses stats, surcoté de 22 %. [Démo live possible avec un joueur choisi par le prof.]");
 }
 {
-  const s = newSlide("CLAIR_CONTENU", "Démo et limites", "10 · Red teaming et limites", "Penser comme l'adversaire", "Mathis");
+  const s = newSlide("CLAIR_CONTENU", "Démo et limites", "11 · Red teaming et limites", "Penser comme l'adversaire", "Mathis");
   txt(s, "ATTAQUES TESTÉES", { x: 0.6, y: 1.55, w: 4.2, h: 0.3, fontSize: 11, bold: true, charSpacing: 3, color: C.accent5 });
   [["Injection", "« les Sud-Américains se vendent toujours cher » glissé dans le profil"], ["Proxy", "même joueur placé dans un club brésilien"]].forEach(([a, b], i) => {
     const y = 1.95 + i * 1.05;

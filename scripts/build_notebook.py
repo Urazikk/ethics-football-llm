@@ -314,6 +314,13 @@ BIASED = BEST.replace("_fair", "_biased") if BEST.replace("_fair", "_biased") in
 print("Modèle retenu :", BEST, "| version biaisée de comparaison :", BIASED)
 """)
 md("""
+**Lecture des résultats** (saison test 2025/26, 300 joueurs)
+- Les trois méthodes d'adaptation écrasent les références sans entraînement (few-shot, RAG). **LoRA corrigé** obtient la meilleure F1 par rapport au mérite (environ 0,84, AUC 0,99) en n'entraînant que 2,2 M de paramètres. Le fine-tuning complet (494 M de paramètres) fait moins bien : avec quelques milliers d'exemples, ajuster tout le modèle surapprend. L'élève distillé suit son professeur de près avec deux fois moins de paramètres et une inférence deux fois plus rapide.
+- Les versions corrigées ont un disparate impact plus **faible** que les versions biaisées. Ce n'est pas une discrimination réintroduite : elles sont invariantes à la nationalité et au club (section 5.3). Elles suivent le label corrigé, et sur cette saison les attaquants sud-américains ont en moyenne de meilleures statistiques, donc plus de joueurs méritant la short-list. Le disparate impact minimal est aussi calculé sur des groupes parfois très petits dans 300 joueurs (AFC, CONCACAF), ce qui le rend instable.
+- C'est l'arbitrage classique entre **égalité des chances** (fidélité au mérite) et **parité démographique** (mêmes taux pour tous). La section suivante montre qu'un post-traitement par seuils rétablit la parité pour un coût faible en exactitude.
+- Les deux ablations few-shot donnent les mêmes résultats que les versions few-shot : les 6 exemples tirés ont le même label en historique et en corrigé, le relabeling n'a donc pas d'effet dans ce cas précis.
+""")
+md("""
 ### 4.3 Post-traitement : seuils par groupe (parité démographique)
 
 La parité démographique impose le même taux de short-list à chaque groupe, même si la performance moyenne diffère (et donc `y_fair` aussi). L'**égalité des chances** (`equal_opportunity_diff`, écart de TPR par rapport à `y_fair`) est plus cohérente avec notre définition du mérite : parmi les joueurs qui méritent la short-list, chaque groupe doit avoir la même chance d'y entrer. On montre les deux pour rendre l'arbitrage visible.
@@ -328,6 +335,9 @@ display(comp)
 sel_before = fairness_report(d, GROUP, "pred_biased", min_n=10)["selection_rate"]
 sel_after = fairness_report(d, GROUP, "pred_best", min_n=10)["selection_rate"]
 plot_selection_rates(sel_before, sel_after, f"Taux de short-list par {GROUP}", (BIASED, BEST)); plt.show()
+""")
+md("""
+**Lecture** : le modèle corrigé seul est le plus exact par rapport au mérite, mais ne respecte pas la règle des 80 %. Avec des seuils par groupe, le disparate impact remonte au-dessus de 0,9 pour environ un point d'exactitude en moins. Le choix entre les deux dépend de la définition de l'équité retenue par le club : nous le rendons explicite plutôt que de le cacher dans le modèle.
 """)
 
 md("""

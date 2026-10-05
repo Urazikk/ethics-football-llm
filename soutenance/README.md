@@ -7,5 +7,5 @@
 | `sources/guide_projet.tex` | Source LaTeX du guide (XeLaTeX) |
 | `sources/build_deck.js` | Script pptxgenjs qui génère le deck |
 
-Répartition : Gautier (slides 1 à 4), Simon (5 à 8), Mathis (9 à 12).
-Les valeurs « à venir » (benchmark, démo) sont à remplir avec le notebook exécuté.
+Répartition : Gautier (slides 1 à 4), Simon (5 à 9), Mathis (10 à 13).
+Chiffres issus du run Colab du 5 octobre (saison test 2025/26, 300 joueurs).
