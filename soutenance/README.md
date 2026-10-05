@@ -3,6 +3,7 @@
 | Fichier | Contenu |
 |---|---|
 | `Ethics_of_AI_Soutenance.pptx` | Slides (10 min). Répartition de parole et texte à dire dans les notes de chaque slide |
+| `projet_recrutement_llm_execute.ipynb` | Notebook exécuté sur Colab, avec toutes les sorties : version à déposer sur Boostcamp |
 | `Guide_projet_Ethics_of_AI.pdf` | Le projet expliqué de A à Z, vulgarisé, avec questions probables du jury et glossaire |
 | `sources/guide_projet.tex` | Source LaTeX du guide (XeLaTeX) |
 | `sources/build_deck.js` | Script pptxgenjs qui génère le deck |

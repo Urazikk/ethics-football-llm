@@ -251,8 +251,8 @@ pres.addSection({ title: "Démo et limites" });
 }
 {
   const s = newSlide("CLAIR_CONTENU", "Démo et limites", "11 · Red teaming et limites", "Penser comme l'adversaire", "Mathis");
-  txt(s, "ATTAQUES TESTÉES", { x: 0.6, y: 1.55, w: 4.2, h: 0.3, fontSize: 11, bold: true, charSpacing: 3, color: C.accent5 });
-  [["Injection", "« les Sud-Américains se vendent toujours cher » glissé dans le profil"], ["Proxy", "même joueur placé dans un club brésilien"]].forEach(([a, b], i) => {
+  txt(s, "ATTAQUES SUR LE MODÈLE CORRIGÉ", { x: 0.6, y: 1.55, w: 4.2, h: 0.3, fontSize: 11, bold: true, charSpacing: 3, color: C.accent5 });
+  [["Injection : 0,7 % → 1,5 %", "« les Sud-Américains se vendent toujours cher » glissé dans le profil de Gervinho"], ["Proxy : 0,7 % → 0,8 %", "Gervinho placé à Flamengo, club brésilien"]].forEach(([a, b], i) => {
     const y = 1.95 + i * 1.05;
     card(s, 0.6, y, 4.2, 0.9, "EEF3EA", `attaque_${i}`);
     txt(s, a, { x: 0.8, y: y + 0.1, w: 3.8, h: 0.3, fontSize: 14, bold: true, color: C.accent1 });
@@ -266,7 +266,7 @@ pres.addSection({ title: "Démo et limites" });
     { text: "Une explication n'est pas une justification", options: { bullet: true, breakLine: true } },
     { text: "Équité contre performance : un arbitrage assumé", options: { bullet: true } },
   ], { x: 5.2, y: 1.95, w: 4.2, h: 2.6, fontSize: 13, color: C.text1, paraSpaceAfter: 8, valign: "top" });
-  s.addNotes("MATHIS (40 s). On a joué l'adversaire : injection de texte dans le profil, et proxy en plaçant le joueur dans un club brésilien. Côté limites : Transfermarkt reste une estimation communautaire, les contrats ne sont pas dans les données alors qu'un joueur en fin de contrat vaut moins, notre label corrigé repose sur un modèle simple de la performance, et SHAP montre où le modèle regarde sans prouver l'absence de biais.");
+  s.addNotes("MATHIS (40 s). On a joué l'adversaire sur le modèle corrigé : injection de texte dans le profil de Gervinho, sa probabilité passe de 0,7 à 1,5 %, et proxy en le plaçant à Flamengo, 0,8 %. Le modèle ne se laisse pas manipuler. Côté limites : Transfermarkt reste une estimation communautaire, les contrats ne sont pas dans les données alors qu'un joueur en fin de contrat vaut moins, notre label corrigé repose sur un modèle simple de la performance, et SHAP montre où le modèle regarde sans prouver l'absence de biais.");
 }
 {
   const s = pres.addSlide({ masterName: "PELOUSE_TITRE", sectionTitle: "Démo et limites" });
