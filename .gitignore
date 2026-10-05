@@ -8,3 +8,6 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .venv/
+
+# Supports de cours et TP versionnés
+!tp/**/*.csv
