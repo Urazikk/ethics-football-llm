@@ -1,8 +1,12 @@
-"""Adaptation d'un petit LLM par trois méthodes, puis benchmark.
+"""Adaptation d'un petit LLM, puis benchmark.
 
-1. Prompting (zero-shot / few-shot fixe)
-2. RAG : on récupère les k joueurs les plus proches du train et on les injecte dans le prompt
-3. Fine-tuning LoRA (PEFT) sur les paires (profil -> valeur)
+Les trois méthodes d'adaptation du cours (fine-tuning) :
+1. Fine-tuning complet : tous les paramètres sont ajustés
+2. LoRA (PEFT) : seules de petites matrices de rang faible sont entraînées
+3. Distillation : un modèle élève plus petit imite le modèle professeur fine-tuné
+
+Références sans entraînement : prompting zero-shot / few-shot, et RAG (les k joueurs les plus
+proches du train sont injectés dans le prompt).
 
 Modèle par défaut : Qwen2.5-0.5B-Instruct (tourne sur Colab T4, sur Mac M1/M2 via MPS, ou CPU lentement).
 """
@@ -76,6 +80,7 @@ class LLMPredictor:
     task: str = "value"                # value (sujet 1) | decision (sujet 2)
     threshold_m: float = 10
     hide: tuple = ()                   # variables masquées dans le prompt, ex. ("nationality",)
+    meta: dict | None = None           # infos d'entraînement (paramètres entraînés, durée), cf. load_meta
 
     def _messages(self, row):
         if self.task == "decision":
@@ -170,37 +175,12 @@ def pick_few_shot(train: pd.DataFrame, n: int = 6, seed: int = 0, label_col: str
     return [(describe_player(r), answer_text(r)) for _, r in ex.iterrows()]
 
 
-# ----------------------------------------------------------------------------- fine-tuning LoRA
+# ----------------------------------------------------------------------------- outils d'entraînement
 
-def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir: str = "outputs/lora",
-                  epochs: int = 2, lr: float = 2e-4, r: int = 16, max_rows: int | None = 3000, seed: int = 42,
-                  task: str = "value", label_col: str | None = None, threshold_m: float = 10,
-                  hide: tuple = (), sample_weight: str | None = None, batch_size: int = 4, grad_accum: int = 2):
-    """Fine-tuning LoRA supervisé : la perte n'est calculée que sur la réponse de l'assistant.
-
-    task='decision' : entraîne sur label_col (0/1). sample_weight : colonne de poids utilisée pour
-    rééchantillonner le train (ex. poids de reweighing pour réduire le biais).
-    batch_size x grad_accum = lot effectif (8) : petits lots pour tenir dans la mémoire d'un Mac 16 Go."""
-    import torch
-    _hide_old_torchao()
-    from peft import LoraConfig, get_peft_model
-    from torch.utils.data import DataLoader
-    from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
-
-    torch.manual_seed(seed)
-    device = get_device()
-    if device == "mps":   # libère le cache laissé par les inférences précédentes du notebook
-        import gc
-        gc.collect()
-        torch.mps.empty_cache()
-    tok = AutoTokenizer.from_pretrained(model_name)
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float32).to(device)
-    model = get_peft_model(model, LoraConfig(r=r, lora_alpha=2 * r, lora_dropout=0.05, task_type="CAUSAL_LM",
-                                             target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]))
-    model.print_trainable_parameters()
-
+def _sft_samples(train: pd.DataFrame, tok, task: str, label_col: str | None, threshold_m: float, hide: tuple,
+                 max_rows: int | None, sample_weight: str | None, seed: int):
+    """Paires (input_ids, labels) : la perte n'est calculée que sur la réponse de l'assistant.
+    sample_weight : colonne de poids utilisée pour rééchantillonner le train (reweighing)."""
     n = min(len(train), max_rows or len(train))
     weights = train[sample_weight] if sample_weight else None
     data = train.sample(n, random_state=seed, weights=weights, replace=weights is not None)
@@ -216,6 +196,12 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
         f_ids = tok(full, add_special_tokens=False)["input_ids"]
         labels = [-100] * len(p_ids) + f_ids[len(p_ids):]
         samples.append((f_ids, labels))
+    return samples
+
+
+def _loader(samples, tok, batch_size: int, shuffle: bool = True):
+    import torch
+    from torch.utils.data import DataLoader
 
     def collate(batch):
         L = max(len(x) for x, _ in batch)
@@ -228,24 +214,223 @@ def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir:
             att[i, :len(x)] = 1
         return ids, att, lab
 
-    dl = DataLoader(samples, batch_size=batch_size, shuffle=True, collate_fn=collate)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    return DataLoader(samples, batch_size=batch_size, shuffle=shuffle, collate_fn=collate)
+
+
+def _train_loop(model, dl, epochs: int, lr: float, grad_accum: int, device: str, loss_fn=None):
+    """Boucle commune. loss_fn(model, ids, att, lab) -> perte ; par défaut, perte de langage sur la réponse.
+    Sur GPU CUDA : précision mixte fp16 (poids et optimiseur en fp32), plus rapide sur un T4."""
+    import torch
+    from transformers import get_linear_schedule_with_warmup
+
+    if loss_fn is None:
+        def loss_fn(m, ids, att, lab):
+            return m(input_ids=ids, attention_mask=att, labels=lab).loss
+    params = [p for p in model.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(params, lr=lr)
     n_updates = -(-len(dl) // grad_accum) * epochs
     sched = get_linear_schedule_with_warmup(opt, int(0.05 * n_updates), n_updates)
+    use_amp = device == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     model.train()
     for ep in range(epochs):
         tot = 0.0
         for step, (ids, att, lab) in enumerate(dl):
-            loss = model(input_ids=ids.to(device), attention_mask=att.to(device), labels=lab.to(device)).loss
-            (loss / grad_accum).backward()
+            ids, att, lab = ids.to(device), att.to(device), lab.to(device)
+            with torch.autocast("cuda", dtype=torch.float16, enabled=use_amp):
+                loss = loss_fn(model, ids, att, lab)
+            scaler.scale(loss / grad_accum).backward()
             if (step + 1) % grad_accum == 0 or step + 1 == len(dl):
-                opt.step(); sched.step(); opt.zero_grad()
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(params, 1.0)
+                scaler.step(opt); scaler.update(); sched.step(); opt.zero_grad()
             tot += loss.item()
             if step % 50 == 0:
                 print(f"epoch {ep} step {step}/{len(dl)} loss {loss.item():.4f}")
         print(f"epoch {ep} mean loss {tot / len(dl):.4f}")
+    model.eval()
+
+
+def _free_memory(device: str):
+    import gc
+    import torch
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    elif device == "mps":
+        torch.mps.empty_cache()
+
+
+def _count(model) -> tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total, trainable
+
+
+def _save_meta(out_dir: str, method: str, total: int, trainable: int, seconds: float, **extra):
+    import json
+    from pathlib import Path
+    meta = {"method": method, "params_total": int(total), "params_trainable": int(trainable),
+            "train_seconds": round(seconds, 1), **extra}
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    (Path(out_dir) / "meta.json").write_text(json.dumps(meta, indent=2))
+    return meta
+
+
+def load_meta(out_dir: str) -> dict:
+    """Infos d'entraînement sauvegardées à côté du modèle (vide si absentes, ex. anciens adaptateurs)."""
+    import json
+    from pathlib import Path
+    f = Path(out_dir) / "meta.json"
+    return json.loads(f.read_text()) if f.exists() else {}
+
+
+def _load_for_training(model_name: str, device: str):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(model_name)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float32).to(device)
+    return tok, model
+
+
+# ----------------------------------------------------------------------------- méthode 1 : fine-tuning complet
+
+def finetune_full(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir: str = "outputs/full",
+                  epochs: int = 2, lr: float = 2e-5, max_rows: int | None = 3000, seed: int = 42,
+                  task: str = "decision", label_col: str | None = "y_hist", threshold_m: float = 10,
+                  hide: tuple = (), sample_weight: str | None = None, batch_size: int = 4, grad_accum: int = 2):
+    """Fine-tuning complet : tous les poids du modèle sont ajustés (taux d'apprentissage faible, 2e-5).
+    Gradient checkpointing pour tenir sur un GPU T4 (16 Go). Le modèle est sauvegardé en fp16 (~1 Go)."""
+    import time
+    import torch
+    torch.manual_seed(seed)
+    device = get_device()
+    _free_memory(device)
+    tok, model = _load_for_training(model_name, device)
+    model.gradient_checkpointing_enable()
+    model.config.use_cache = False
+    total, trainable = _count(model)
+    print(f"fine-tuning complet : {trainable / 1e6:.0f} M paramètres entraînés sur {total / 1e6:.0f} M")
+    samples = _sft_samples(train, tok, task, label_col, threshold_m, hide, max_rows, sample_weight, seed)
+    t0 = time.time()
+    _train_loop(model, _loader(samples, tok, batch_size), epochs, lr, grad_accum, device)
+    secs = time.time() - t0
+    model.config.use_cache = True
+    model.half().save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
+    del model
+    _free_memory(device)
+    _save_meta(out_dir, "full_finetuning", total, trainable, secs, rows=len(samples), epochs=epochs)
+    return out_dir
+
+
+# ----------------------------------------------------------------------------- méthode 2 : LoRA
+
+def finetune_lora(train: pd.DataFrame, model_name: str = DEFAULT_MODEL, out_dir: str = "outputs/lora",
+                  epochs: int = 2, lr: float = 2e-4, r: int = 16, max_rows: int | None = 3000, seed: int = 42,
+                  task: str = "value", label_col: str | None = None, threshold_m: float = 10,
+                  hide: tuple = (), sample_weight: str | None = None, batch_size: int = 4, grad_accum: int = 2):
+    """Fine-tuning LoRA supervisé : seules des matrices de rang r sont entraînées (q, k, v, o).
+
+    task='decision' : entraîne sur label_col (0/1). sample_weight : colonne de poids utilisée pour
+    rééchantillonner le train (ex. poids de reweighing pour réduire le biais).
+    batch_size x grad_accum = lot effectif (8) : petits lots pour tenir dans la mémoire d'un Mac 16 Go."""
+    import time
+    import torch
+    _hide_old_torchao()
+    from peft import LoraConfig, get_peft_model
+
+    torch.manual_seed(seed)
+    device = get_device()
+    _free_memory(device)
+    tok, model = _load_for_training(model_name, device)
+    model = get_peft_model(model, LoraConfig(r=r, lora_alpha=2 * r, lora_dropout=0.05, task_type="CAUSAL_LM",
+                                             target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]))
+    model.print_trainable_parameters()
+    total, trainable = _count(model)
+    samples = _sft_samples(train, tok, task, label_col, threshold_m, hide, max_rows, sample_weight, seed)
+    t0 = time.time()
+    _train_loop(model, _loader(samples, tok, batch_size), epochs, lr, grad_accum, device)
+    secs = time.time() - t0
     model.save_pretrained(out_dir)
     tok.save_pretrained(out_dir)
+    del model
+    _free_memory(device)
+    _save_meta(out_dir, "lora", total, trainable, secs, rows=len(samples), epochs=epochs, r=r)
+    return out_dir
+
+
+# ----------------------------------------------------------------------------- méthode 3 : distillation
+
+def make_student(model_name: str = DEFAULT_MODEL, n_layers: int = 8, device: str = "cpu"):
+    """Élève : même architecture et même tokenizer que le professeur, mais seulement n_layers couches
+    (réparties uniformément), initialisées depuis le modèle pré-entraîné (comme DistilBERT)."""
+    import numpy as np
+    import torch
+    tok, model = _load_for_training(model_name, device)
+    L = model.config.num_hidden_layers
+    keep = sorted(set(np.linspace(0, L - 1, n_layers).round().astype(int).tolist()))
+    model.model.layers = torch.nn.ModuleList([model.model.layers[i] for i in keep])
+    for i, layer in enumerate(model.model.layers):
+        if hasattr(layer, "self_attn"):
+            layer.self_attn.layer_idx = i
+    model.config.num_hidden_layers = len(keep)
+    if getattr(model.config, "layer_types", None):
+        model.config.layer_types = [model.config.layer_types[i] for i in keep]
+    if getattr(model.config, "max_window_layers", None):
+        model.config.max_window_layers = min(model.config.max_window_layers, len(keep))
+    return tok, model
+
+
+def distill(train: pd.DataFrame, teacher_dir: str, model_name: str = DEFAULT_MODEL, out_dir: str = "outputs/distill",
+            n_layers: int = 8, temperature: float = 2.0, alpha: float = 0.5, epochs: int = 2, lr: float = 1e-4,
+            max_rows: int | None = 3000, seed: int = 42, task: str = "decision", label_col: str | None = "y_hist",
+            threshold_m: float = 10, hide: tuple = (), sample_weight: str | None = None,
+            batch_size: int = 4, grad_accum: int = 2):
+    """Distillation : l'élève apprend à reproduire la distribution du professeur (fine-tuné) sur les
+    tokens de la réponse. Perte = alpha x KL(professeur || élève) x T² + (1 - alpha) x perte sur le vrai label.
+    Même tokenizer pour les deux modèles, donc la KL se calcule sur tout le vocabulaire."""
+    import time
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModelForCausalLM
+
+    torch.manual_seed(seed)
+    device = get_device()
+    _free_memory(device)
+    dtype = torch.float16 if device == "cuda" else torch.float32
+    teacher = AutoModelForCausalLM.from_pretrained(teacher_dir, dtype=dtype).to(device).eval()
+    for p in teacher.parameters():
+        p.requires_grad_(False)
+    tok, student = make_student(model_name, n_layers, device)
+    t_total, _ = _count(teacher)
+    total, trainable = _count(student)
+    print(f"distillation : professeur {t_total / 1e6:.0f} M paramètres, élève {total / 1e6:.0f} M "
+          f"({student.config.num_hidden_layers} couches)")
+    samples = _sft_samples(train, tok, task, label_col, threshold_m, hide, max_rows, sample_weight, seed)
+    T = temperature
+
+    def kd_loss(m, ids, att, lab):
+        out = m(input_ids=ids, attention_mask=att, labels=lab)
+        with torch.no_grad():
+            t_logits = teacher(input_ids=ids, attention_mask=att).logits
+        mask = lab[:, 1:] != -100                       # positions qui prédisent un token de la réponse
+        s = out.logits[:, :-1][mask].float() / T
+        t = t_logits[:, :-1][mask].float() / T
+        kl = F.kl_div(F.log_softmax(s, -1), F.log_softmax(t, -1), log_target=True, reduction="batchmean")
+        return alpha * kl * T * T + (1 - alpha) * out.loss
+
+    t0 = time.time()
+    _train_loop(student, _loader(samples, tok, batch_size), epochs, lr, grad_accum, device, loss_fn=kd_loss)
+    secs = time.time() - t0
+    student.half().save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
+    del student, teacher
+    _free_memory(device)
+    _save_meta(out_dir, "distillation", total, trainable, secs, rows=len(samples), epochs=epochs,
+               teacher=str(teacher_dir), n_layers=n_layers, temperature=T, alpha=alpha)
     return out_dir
 
 

@@ -26,15 +26,15 @@ ethics-football-llm/
 │   ├── bias.py          # prime inexpliquée par la performance, paires de joueurs comparables
 │   ├── fairness.py      # labels historique / corrigé, reweighing, métriques d'équité, seuils par groupe
 │   ├── prompts.py       # profils en texte, prompts valeur et décision, parsing des réponses
-│   ├── llm_methods.py   # 3 méthodes : few-shot, RAG, fine-tuning LoRA + benchmark
+│   ├── llm_methods.py   # fine-tuning complet, LoRA, distillation (+ few-shot, RAG en référence)
 │   ├── valuation.py     # ce joueur est-il surcoté ou sous-coté ? (verdict + commentaire du LLM)
 │   ├── xai.py           # LIME et SHAP appliqués au LLM, contrefactuels, substitut global
 │   └── plots.py
 ├── scripts/build_notebook.py   # régénère le notebook
-├── tests/                      # test de bout en bout avec un LLM factice
+├── tests/                      # pipeline avec LLM factice, test des 3 méthodes sur mini-modèle
 ├── SUJETS.md                   # autres sujets possibles avec ce dataset
 ├── data/raw/                   # mettre les CSV Kaggle ici (non versionnés)
-└── outputs/                    # adaptateurs LoRA (non versionnés)
+└── outputs/                    # modèles entraînés : full_*, lora_*, distill_* (non versionnés)
 ```
 
 ## Installation
@@ -55,7 +55,7 @@ jupyter notebook notebooks/projet_recrutement_llm.ipynb
 
 **VS Code** : installer les extensions Python et Jupyter (proposées à l'ouverture du dossier), ouvrir le notebook et choisir le noyau `.venv`. Le dossier `.vscode/` pointe déjà vers ce venv. Sur Mac Apple Silicon, le LLM tourne sur le GPU (MPS).
 
-**Matériel** : le LLM (Qwen2.5-0.5B-Instruct) tourne sur Colab (GPU T4 gratuit) ou sur Mac Apple Silicon (MPS). Le fine-tuning LoRA prend environ 10 min par modèle sur T4. Réduire `N_EVAL` pour aller plus vite.
+**Matériel** : le LLM (Qwen2.5-0.5B-Instruct) tourne sur Colab (GPU T4 gratuit) ou sur Mac Apple Silicon (MPS). Sur T4 : environ 10 à 15 min par version pour le fine-tuning complet, 10 min pour LoRA, 8 min pour la distillation. Réduire `N_EVAL` pour aller plus vite.
 
 **Test rapide sans GPU** : `USE_MOCK_LLM=1` remplace le LLM par un GBM, pour vérifier que tout le pipeline tourne.
 
@@ -69,7 +69,7 @@ python -m tests.test_pipeline ~/Downloads/archive
 2. **Biais** : la valeur (log10) est expliquée par la performance seule (buts/90, passes/90, minutes, matchs, âge, championnat, saison). Le résidu moyen par nationalité mesure la prime inexpliquée.
 3. **Labels** : `y_hist` (valeur réelle ≥ 10 M€, biaisé) et `y_fair` (valeur attendue par la performance ≥ 10 M€).
 4. **Réduction** : relabeling + reweighing (données), masquage de la nationalité (prompt), seuils par groupe (post-traitement).
-5. **LLM** : few-shot, RAG, LoRA, chacun en version biaisée et corrigée, plus deux ablations (masquage seul, relabeling seul). Choix du modèle par `F1(y_fair) x min(1, DI / 0,8)`.
+5. **LLM** : les trois méthodes du cours (fine-tuning complet, LoRA, distillation) et des références sans entraînement (few-shot, RAG), chacune en version biaisée et corrigée, plus deux ablations (masquage seul, relabeling seul). Choix du modèle par `F1(y_fair) x min(1, DI / 0,8)`, avec un tableau d'efficacité (paramètres, temps d'entraînement et d'inférence).
 6. **XAI** : LIME et KernelSHAP sur P(YES), lu dans les logits du LLM. Contrefactuel « même joueur, autre nationalité ». Substitut GBM + TreeSHAP pour la vue globale.
 7. **Démo interactive** : on choisit un attaquant dans un champ de saisie. Sa valeur Transfermarkt est comparée à la valeur attendue d'après sa performance : surcoté au-delà de +20 %, sous-coté en dessous de -20 %. La prime moyenne de sa confédération montre la part liée à la nationalité, et le LLM commente le verdict.
 8. **Red teaming** : injection dans le prompt, proxy (club).

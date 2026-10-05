@@ -25,7 +25,7 @@ Fil conducteur du notebook (consignes du cours) :
 1. Dataset réel (Transfermarkt, Kaggle) et cartographie des parties prenantes
 2. Mise en évidence des biais (nationalité)
 3. Réduction des biais (données, prompt, post-traitement)
-4. Un petit LLM adapté par **trois méthodes** (prompting few-shot, RAG, fine-tuning LoRA) puis benchmark
+4. Un petit LLM adapté par les **trois méthodes du cours** (fine-tuning complet, LoRA, distillation), comparées à des références sans entraînement (few-shot, RAG), puis benchmark performance, équité et efficacité
 5. Explication des décisions avec **LIME** et **SHAP**
 6. Démo interactive : choisir un joueur et savoir s'il est surcoté ou sous-coté
 7. Démo : deux attaquants aux stats équivalentes, avant et après correction
@@ -47,6 +47,9 @@ if "google.colab" in sys.modules:
     !pip uninstall -q -y torchao   # version préinstallée trop ancienne pour peft
     !unzip -q -o "{DRIVE}/colab_lora.zip" -d .
     !unzip -q -o "{DRIVE}/colab_data.zip" -d data/raw
+    # Modèles déjà entraînés lors d'une session précédente (fine-tuning complet, distillation)
+    if os.path.exists(f"{DRIVE}/outputs_colab"):
+        !cp -rn "{DRIVE}/outputs_colab/." outputs/
 
 import os, sys, warnings
 from pathlib import Path
@@ -61,6 +64,8 @@ THRESHOLD_M = 10          # seuil de la short-list premium (M€)
 GROUP = "confederation"   # attribut sensible analysé
 N_EVAL = 300              # nb de joueurs du test évalués par le LLM (coût)
 LORA_ROWS = 3000          # exemples pour le fine-tuning LoRA (Mac M1 : ~50 min par modèle, 1500 = ~25 min)
+FT_ROWS = 3000            # exemples pour le fine-tuning complet et la distillation
+STUDENT_LAYERS = 8        # couches de l'élève distillé (le professeur Qwen2.5-0.5B en a 24)
 USE_MOCK_LLM = os.environ.get("USE_MOCK_LLM", "0") == "1"   # 1 = test rapide sans LLM
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
@@ -169,18 +174,22 @@ md("""
 
 Modèle : **Qwen2.5-0.5B-Instruct** (0,5 milliard de paramètres, tourne sur Colab T4 ou sur Mac M1/M2).
 
-1. **Prompting few-shot** : 6 exemples fixes dans le prompt
-2. **RAG** : les 5 joueurs les plus proches du train (stats, championnat) sont injectés dans le prompt
-3. **Fine-tuning LoRA** : adaptation supervisée sur les paires (profil, décision)
+**Les trois méthodes d'adaptation du cours**, entraînées sur les paires (profil, décision) :
+1. **Fine-tuning complet** : les 494 M de paramètres sont ajustés. Performance maximale attendue, mais coûteux en calcul et en stockage (un modèle complet par version).
+2. **LoRA** : seules de petites matrices de rang 16 sont entraînées (environ 0,5 % des paramètres). Léger et rapide.
+3. **Distillation** : un élève de 8 couches (contre 24), initialisé depuis Qwen, apprend à imiter le modèle fine-tuné complet (professeur). Perte = KL entre les distributions du professeur et de l'élève + perte sur le vrai label. Modèle plus petit et plus rapide en production.
 
-Chaque méthode est déclinée en version **biaisée** (labels `y_hist`, nationalité visible) et **débiaisée** (labels `y_fair`, reweighing, nationalité masquée).
+**Références sans entraînement** : zero-shot, few-shot (6 exemples fixes dans le prompt) et RAG (les 5 joueurs les plus proches du train sont injectés dans le prompt).
+
+Chaque méthode est déclinée en version **biaisée** (labels `y_hist`, nationalité visible) et **débiaisée** (labels `y_fair`, reweighing, nationalité masquée). Pour la distillation, l'élève débiaisé apprend du professeur débiaisé.
 
 **Ablation** (few-shot, sans coût d'entraînement) : pour savoir quel levier agit, on isole
 - `ablation_masquage_seul` : labels historiques `y_hist`, nationalité masquée. Masquer suffit-il, ou les proxys (club, championnat) transmettent-ils le biais ?
 - `ablation_relabel_seul` : labels corrigés `y_fair`, nationalité visible.
 """)
 code("""
-from src.llm_methods import LLMPredictor, Retriever, pick_few_shot, finetune_lora, load_llm
+from src.llm_methods import (LLMPredictor, Retriever, pick_few_shot, finetune_full, finetune_lora, distill,
+                             load_llm, load_meta)
 
 if USE_MOCK_LLM:   # test du pipeline sans GPU : un GBM joue le rôle du LLM
     from tests.mock_llm import MockPredictor
@@ -189,8 +198,12 @@ if USE_MOCK_LLM:   # test du pipeline sans GPU : un GBM joue le rôle du LLM
         "few_shot_fair": MockPredictor(train, "decision", "y_fair", hide=("nationality",)),
         "rag_biased": MockPredictor(train, "decision", "y_hist"),
         "rag_fair": MockPredictor(train, "decision", "y_fair", hide=("nationality",)),
+        "full_biased": MockPredictor(train, "decision", "y_hist"),
+        "full_fair": MockPredictor(train, "decision", "y_fair", hide=("nationality",)),
         "lora_biased": MockPredictor(train, "decision", "y_hist"),
         "lora_fair": MockPredictor(train, "decision", "y_fair", hide=("nationality",)),
+        "distill_biased": MockPredictor(train, "decision", "y_hist"),
+        "distill_fair": MockPredictor(train, "decision", "y_fair", hide=("nationality",)),
         "ablation_masquage_seul": MockPredictor(train, "decision", "y_hist", hide=("nationality",)),
         "ablation_relabel_seul": MockPredictor(train, "decision", "y_fair"),
     }
@@ -217,28 +230,59 @@ else:
     }
 """)
 md("""
-### 4.1 Fine-tuning LoRA
+### 4.1 Entraînement : fine-tuning complet, LoRA, distillation
 
-Environ 10 min par modèle sur un GPU T4, environ 50 min sur un Mac M1 (2 epochs, 3 000 exemples, réglable avec `LORA_ROWS`). Les adaptateurs sont sauvegardés dans `outputs/`, on peut relancer le notebook sans ré-entraîner.
+Durées indicatives sur un GPU T4 (Colab), 2 epochs, 3 000 exemples :
+- fine-tuning complet : environ 10 à 15 min par version
+- LoRA : environ 10 min par version
+- distillation : environ 8 min par version (après le fine-tuning complet, qui sert de professeur)
+
+Les modèles sont sauvegardés dans `outputs/` (et copiés sur le Drive sous Colab) : en relançant le notebook, rien n'est ré-entraîné. Chaque dossier contient un `meta.json` (paramètres entraînés, durée) repris dans le benchmark.
 """)
 code("""
 if not USE_MOCK_LLM:
-    for tag, label, hide_, w in [("biased", "y_hist", (), None), ("fair", "y_fair", ("nationality",), "weight")]:
-        out = ROOT / "outputs" / f"lora_{tag}"
-        if not (out / "adapter_config.json").exists():
-            finetune_lora(train, MODEL_NAME, str(out), task="decision", label_col=label,
-                          threshold_m=THRESHOLD_M, hide=hide_, sample_weight=w, max_rows=LORA_ROWS)
-        tk, m = load_llm(MODEL_NAME, adapter_path=str(out))
-        predictors[f"lora_{tag}"] = LLMPredictor(tk, m, "finetuned", task="decision",
-                                                 threshold_m=THRESHOLD_M, hide=hide_)
+    VERSIONS = [("biased", "y_hist", (), None), ("fair", "y_fair", ("nationality",), "weight")]
+    OUT = ROOT / "outputs"
+    common = dict(task="decision", threshold_m=THRESHOLD_M)
+    for tag, label, hide_, w in VERSIONS:
+        kw = dict(label_col=label, hide=hide_, sample_weight=w, **common)
+        if not (OUT / f"full_{tag}" / "config.json").exists():
+            finetune_full(train, MODEL_NAME, str(OUT / f"full_{tag}"), max_rows=FT_ROWS, **kw)
+        if not (OUT / f"lora_{tag}" / "adapter_config.json").exists():
+            finetune_lora(train, MODEL_NAME, str(OUT / f"lora_{tag}"), max_rows=LORA_ROWS, **kw)
+        if not (OUT / f"distill_{tag}" / "config.json").exists():
+            distill(train, str(OUT / f"full_{tag}"), MODEL_NAME, str(OUT / f"distill_{tag}"),
+                    n_layers=STUDENT_LAYERS, max_rows=FT_ROWS, **kw)
+
+    # Sauvegarde sur le Drive pour ne pas ré-entraîner à la prochaine session Colab
+    if "google.colab" in sys.modules:
+        !mkdir -p "{DRIVE}/outputs_colab" && cp -rn outputs/full_* outputs/distill_* "{DRIVE}/outputs_colab/"
+
+    for tag, label, hide_, w in VERSIONS:
+        for method in ("full", "lora", "distill"):
+            path = OUT / f"{method}_{tag}"
+            tk, m = load_llm(MODEL_NAME, adapter_path=str(path)) if method == "lora" else load_llm(str(path))
+            predictors[f"{method}_{tag}"] = LLMPredictor(tk, m, "finetuned", task="decision", threshold_m=THRESHOLD_M,
+                                                         hide=hide_, meta=load_meta(str(path)))
 """)
 md("### 4.2 Benchmark : performance et équité")
 code("""
+import time
 from sklearn.metrics import f1_score, roc_auc_score
-rows, scores = [], {}
+rows, scores, effic = [], {}, []
 for name, p in predictors.items():
+    t0 = time.perf_counter()
     proba = p.predict_proba(test_eval)
+    infer_s = time.perf_counter() - t0
     scores[name] = proba
+    model = getattr(p, "model", None)
+    meta = getattr(p, "meta", None) or {}
+    n_total = sum(x.numel() for x in model.parameters()) if model is not None else np.nan
+    effic.append({"method": name,
+                  "params_M": round(n_total / 1e6, 1),
+                  "params_entraines_M": round(meta.get("params_trainable", 0) / 1e6, 2),
+                  "entrainement_min": round(meta.get("train_seconds", 0) / 60, 1) if meta.get("train_seconds") else np.nan,
+                  "inference_s_par_100": round(100 * infer_s / len(test_eval), 2)})
     pred = (proba >= 0.5).astype(int)
     d = test_eval.assign(pred=pred)
     rows.append({"method": name,
@@ -250,7 +294,13 @@ bench = pd.DataFrame(rows).set_index("method")
 bench
 """)
 md("""
-**Choix du modèle** : on ne prend pas seulement la meilleure F1. Score = F1 par rapport à `y_fair`, pénalisé si le disparate impact passe sous 0,8 : `score = F1 x min(1, DI / 0,8)`. Le critère est explicite et documenté. Les ablations servent à l'analyse et ne sont pas candidates.
+**Efficacité** (comme dans le TP Fine-tuning) : taille du modèle, paramètres entraînés, durée d'entraînement et vitesse d'inférence. Le fine-tuning complet entraîne tout le modèle, LoRA une infime fraction, et l'élève distillé est le plus rapide en inférence.
+""")
+code("""
+pd.DataFrame(effic).set_index("method")
+""")
+md("""
+**Choix du modèle** : on ne prend pas seulement la meilleure F1. Score = F1 par rapport à `y_fair`, pénalisé si le disparate impact passe sous 0,8 : `score = F1 x min(1, DI / 0,8)`. Le critère est explicite et documenté. Les ablations servent à l'analyse et ne sont pas candidates. À score proche, on privilégie le modèle le plus léger (tableau d'efficacité ci-dessus) : c'est l'argument de la distillation.
 
 **Attention, évaluation en partie circulaire** : les versions corrigées apprennent `y_fair` et sont notées sur `y_fair`, elles partent donc avantagées. `F1_vs_y_hist` montre le coût de la correction par rapport aux décisions historiques ; la lecture honnête compare les deux colonnes.
 """)
