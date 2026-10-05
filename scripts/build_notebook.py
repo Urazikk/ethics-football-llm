@@ -280,7 +280,9 @@ for name, p in predictors.items():
     n_total = sum(x.numel() for x in model.parameters()) if model is not None else np.nan
     effic.append({"method": name,
                   "params_M": round(n_total / 1e6, 1),
-                  "params_entraines_M": round(meta.get("params_trainable", 0) / 1e6, 2),
+                  # adaptateurs LoRA entraînés avant l'ajout de meta.json : on compte les matrices LoRA
+                  "params_entraines_M": round((meta.get("params_trainable") or (sum(x.numel() for n, x in model.named_parameters()
+                                               if "lora_" in n) if model is not None else 0)) / 1e6, 2),
                   "entrainement_min": round(meta.get("train_seconds", 0) / 60, 1) if meta.get("train_seconds") else np.nan,
                   "inference_s_par_100": round(100 * infer_s / len(test_eval), 2)})
     pred = (proba >= 0.5).astype(int)
