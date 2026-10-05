@@ -1,0 +1,344 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{fontspec}
+\setmainfont{Latin Modern Roman}
+\usepackage{polyglossia}
+\setmainlanguage{french}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{microtype}
+\emergencystretch=2em
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[most]{tcolorbox}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{pitch}{HTML}{1F4A1A}
+\definecolor{pale}{HTML}{EEF3EA}
+\definecolor{amb}{HTML}{FFF4E5}
+\definecolor{ambd}{HTML}{B45309}
+
+\titleformat{\section}{\Large\bfseries\color{pitch}}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\large\bfseries\color{pitch}}{\thesubsection}{0.5em}{}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+
+\newtcolorbox{simple}{colback=pale,colframe=pitch,boxrule=0.6pt,arc=2pt,
+  title={\bfseries En clair},fonttitle=\color{white},left=6pt,right=6pt}
+\newtcolorbox{oral}{colback=amb,colframe=ambd,boxrule=0.6pt,arc=2pt,
+  title={\bfseries À dire à l'oral},fonttitle=\color{white},left=6pt,right=6pt}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries\color{pitch} Même stats, pas le même prix}\\[4pt]
+{\large Comprendre le projet Ethics of AI de A à Z}\\[4pt]
+Simon Gallais, Gautier Deplanque, Mathis Leitao, ING5 Data IA, ECE Paris
+\end{center}
+
+\tableofcontents
+\newpage
+
+\section{Le projet en une minute}
+
+Un club de football veut un assistant qui répond à une question simple : \emph{cet attaquant doit-il entrer dans notre short-list de cibles prioritaires ?} Une cible prioritaire, c'est un joueur dont la valeur attendue dépasse 10 M€.
+
+Problème : si on apprend cette décision sur les valeurs marchandes réelles, le modèle apprend aussi leurs préjugés. À statistiques égales, un attaquant sud-américain vaut environ 25 \% de plus qu'un européen, un africain environ 8 \% de moins. Le modèle finirait par recommander plus souvent les Sud-Américains, sans raison sportive.
+
+Le projet suit donc cinq étapes :
+\begin{enumerate}
+  \item \textbf{Mesurer} ce biais dans les données.
+  \item \textbf{Le réduire} à trois niveaux : les données, l'entrée du modèle, sa sortie.
+  \item \textbf{Adapter un petit LLM} à la tâche avec les trois méthodes du cours (fine-tuning complet, LoRA, distillation) et choisir la meilleure.
+  \item \textbf{Expliquer} ses décisions avec LIME et SHAP.
+  \item \textbf{Montrer} l'effet en démo : deux joueurs identiques sauf la nationalité, avant et après correction.
+\end{enumerate}
+
+\begin{simple}
+On construit un recruteur automatique, on prouve qu'il hérite d'un préjugé sur la nationalité, on corrige ce préjugé, puis on montre et on explique la différence.
+\end{simple}
+
+\section{Ce que demande le prof}
+Consignes du dernier cours (projet bonus, jusqu'à 3 points sur l'examen) :
+\begin{itemize}
+  \item trouver un dataset réel, mettre en évidence ses biais, et les réduire si l'on construit une prédiction « non biaisée » ;
+  \item prendre un LLM manipulable, l'adapter par les trois méthodes du cours (fine-tuning complet, LoRA, distillation) et les comparer pour garder la plus adaptée ;
+  \item l'utiliser pour résoudre un vrai problème lié au dataset ;
+  \item expliquer ses décisions avec les deux outils d'XAI, LIME et SHAP ;
+  \item présentation de 10 minutes en groupe, notebook et slides déposés sur Boostcamp avant.
+\end{itemize}
+Le prof donne deux exemples : une prédiction « réaliste » (valeur marchande, sans correction) et une décision « non biaisée » (admissions, avec correction). Notre sujet suit le second modèle : c'est une \textbf{décision}, donc on corrige le biais.
+
+\section{Les données}
+\begin{itemize}
+  \item Source : \emph{Football Data from Transfermarkt}, sur Kaggle. Transfermarkt est un site où une communauté estime la valeur marchande des joueurs.
+  \item On garde les \textbf{attaquants} des cinq grands championnats (Angleterre, Espagne, Italie, Allemagne, France), de 2012/13 à 2025/26, avec au moins 450 minutes jouées dans la saison.
+  \item Une ligne = un joueur sur une saison : matchs, minutes, buts, passes, âge, nationalité, club, championnat, et sa valeur marchande au 31 juillet suivant. Environ 6\,900 lignes au total.
+  \item Les nationalités sont regroupées par \textbf{confédération} : UEFA (Europe), CONMEBOL (Amérique du Sud), CAF (Afrique), etc. Cela donne des groupes assez grands pour des statistiques fiables.
+\end{itemize}
+
+\textbf{Découpage temporel.} Le jeu d'entraînement contient les saisons passées, le jeu de test la dernière saison complète. On simule ainsi un vrai usage : on entraîne sur le passé et on décide pour la saison suivante. Cela évite aussi la « fuite » d'information du futur vers le passé.
+
+\section{Mesurer le biais}
+\subsection{L'idée}
+On veut savoir si la nationalité influence la valeur \emph{à performance égale}. Pour cela, on construit un modèle qui prédit la valeur d'un joueur à partir de ses \textbf{seules statistiques sportives} : buts et passes par 90 minutes, minutes, matchs, âge, championnat, saison. C'est une régression linéaire classique.
+
+Pour chaque joueur, on obtient une \textbf{valeur attendue} (ce que ses stats justifient). L'écart entre sa valeur réelle et sa valeur attendue s'appelle le \textbf{résidu} : c'est la part de son prix que la performance n'explique pas.
+
+Si les résidus sont en moyenne positifs pour les Sud-Américains et négatifs pour les Africains, il y a une prime ou une décote liée au groupe : c'est le biais.
+
+\begin{simple}
+On calcule le « juste prix sportif » de chaque joueur. Si les Sud-Américains sont systématiquement payés au-dessus de leur juste prix, et les Africains en dessous, la nationalité pèse dans le prix.
+\end{simple}
+
+\subsection{Pourquoi le logarithme}
+Les valeurs vont de quelques centaines de milliers à plus de 100 M€. On travaille sur $\log_{10}$ de la valeur : un écart de résidu correspond alors à un \emph{pourcentage}, pas à un montant. Une prime de +25 \% a le même sens pour un joueur à 2 M€ que pour un joueur à 50 M€.
+
+\subsection{Les résultats}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Prime à performance égale, CONMEBOL & +25 \% (intervalle de confiance à 95 \% : +19 \% à +31 \%) \\
+Décote à performance égale, CAF & -8 \% \\
+Prime CONMEBOL en contrôlant aussi le club & +10 \% \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Exemple frappant} : Gervinho (Côte d'Ivoire, Parme) et Higuaín (Argentine, Juventus), Serie A 2019/20, 6 buts et 4 passes chacun. Valeurs : 5,5 M€ contre 25,5 M€.
+
+\subsection{Le facteur confondant : le club}
+Les Sud-Américains jouent plus souvent dans de grands clubs, et un grand club fait monter la valeur. Une partie de la prime vient donc du club, pas directement de la nationalité. En comparant des joueurs \emph{d'un même club} (on dit « avec effet fixe club »), la prime tombe à +10 \% mais ne disparaît pas.
+
+\begin{oral}
+« Une partie du biais est structurelle, elle passe par l'accès aux grands clubs. Une autre partie subsiste même à club égal. »
+\end{oral}
+
+\section{Des valeurs aux décisions}
+\subsection{Deux labels}
+\begin{itemize}
+  \item \texttt{y\_hist}, le label \textbf{historique} : 1 si la valeur réelle dépasse 10 M€. C'est ce qu'un modèle naïf apprendrait, préjugé compris.
+  \item \texttt{y\_fair}, le label \textbf{corrigé} : 1 si la valeur \emph{attendue d'après la seule performance} dépasse 10 M€. Le modèle de performance est ajusté sur les saisons d'entraînement uniquement.
+\end{itemize}
+Taux de short-list historique : 48 \% pour les Sud-Américains, 35 \% pour les Africains.
+
+\subsection{Mesurer l'équité d'une décision}
+\begin{itemize}
+  \item \textbf{Taux de sélection} : la part de chaque groupe mise en short-list.
+  \item \textbf{Disparate impact} : taux de sélection du groupe le moins favorisé divisé par celui du plus favorisé. La « règle des 80 \% », issue du droit américain du travail, considère qu'en dessous de 0,8 il y a discrimination. Notre label historique est à \textbf{0,65}.
+  \item \textbf{Égalité des chances} (\emph{equal opportunity}) : parmi les joueurs qui \emph{méritent} la short-list (selon \texttt{y\_fair}), chaque groupe doit avoir la même chance d'y entrer. On mesure l'écart de taux de vrais positifs entre groupes.
+\end{itemize}
+
+\begin{simple}
+Disparate impact : « est-ce que chaque groupe est sélectionné aussi souvent ? ». Égalité des chances : « parmi les bons joueurs, est-ce que chaque groupe a la même chance d'être repéré ? ». La seconde est plus cohérente avec une logique de mérite.
+\end{simple}
+
+\section{Réduire le biais : trois leviers}
+\subsection{Sur les données : relabeling et reweighing}
+\textbf{Relabeling} : on entraîne le modèle sur \texttt{y\_fair} au lieu de \texttt{y\_hist}. Il apprend ce que justifie la performance, pas ce que le marché a payé.
+
+\textbf{Reweighing} (Kamiran et Calders) : on donne un poids à chaque exemple pour que, dans les données d'entraînement, le label devienne indépendant du groupe. Le poids d'un exemple du groupe $g$ avec le label $y$ vaut :
+\[ w(g, y) = \frac{P(g) \times P(y)}{P(g, y)} \]
+Si les Africains sélectionnés sont rares par rapport à ce qu'on attendrait, ils reçoivent un poids supérieur à 1, et inversement. Concrètement, on rééchantillonne les exemples selon ces poids.
+
+\subsection{Sur l'entrée : masquer la nationalité}
+On retire la nationalité du texte envoyé au modèle (\emph{fairness through unawareness}). Limite : d'autres variables peuvent la trahir, par exemple le club. Ce sont des \textbf{proxys}.
+
+\subsection{Sur la sortie : seuils par groupe}
+Le modèle donne une probabilité de short-list. Au lieu d'un seuil unique à 0,5, on choisit un seuil par groupe pour obtenir le même taux de sélection partout (parité démographique). C'est un post-traitement.
+
+\subsection{Les ablations}
+Pour savoir quel levier agit vraiment, on isole :
+\begin{itemize}
+  \item \emph{masquage seul} : labels historiques, nationalité masquée. Si le biais persiste, les proxys le transmettent.
+  \item \emph{relabeling seul} : labels corrigés, nationalité visible.
+\end{itemize}
+
+\section{Le LLM et sa lecture des décisions}
+\subsection{Le modèle}
+\textbf{Qwen2.5-0.5B-Instruct} : un LLM de 494 millions de paramètres, assez petit pour tourner sur un GPU gratuit de Colab (T4) ou un Mac récent. C'est ce que le prof appelle un LLM « manipulable ».
+
+\subsection{Le prompt}
+Le profil du joueur est écrit en texte, par exemple : « 23-year-old Morocco forward playing for LOSC Lille (Ligue 1). This season: 9 games, 700 minutes, 6 goals, 1 assists. Should he be shortlisted? ». Le modèle répond « Decision: YES » ou « Decision: NO ».
+
+\subsection{Lire une probabilité plutôt qu'un texte}
+Plutôt que de laisser le modèle générer du texte (parfois instable), on lui fait compléter « Decision: » et on lit directement les scores qu'il donne aux mots « YES » et « NO ». On en déduit une probabilité P(YES) entre 0 et 1.
+
+\begin{simple}
+On ne lit pas la réponse écrite du modèle, on regarde à quel point il « hésite » entre YES et NO. Cela donne un score continu, plus stable, et indispensable pour LIME, SHAP et les seuils par groupe.
+\end{simple}
+
+\subsection{Les références sans entraînement}
+\begin{itemize}
+  \item \textbf{Zero-shot} : on pose la question sans exemple.
+  \item \textbf{Few-shot} : on ajoute 6 exemples de décisions passées dans le prompt.
+  \item \textbf{RAG} (\emph{Retrieval-Augmented Generation}) : pour chaque joueur, on va chercher les 5 joueurs les plus proches dans l'historique (stats, championnat) et on les met dans le prompt comme exemples.
+\end{itemize}
+
+\section{Les trois méthodes d'adaptation}
+Les trois méthodes du cours modifient le modèle lui-même en l'entraînant sur des paires (profil, décision). Chacune existe en deux versions : \textbf{biaisée} (labels historiques, nationalité visible) et \textbf{corrigée} (labels corrigés, reweighing, nationalité masquée).
+
+\subsection{Fine-tuning complet}
+On ajuste \textbf{tous} les 494 millions de paramètres du modèle. C'est la méthode la plus puissante en théorie, mais la plus coûteuse : plus de mémoire, plus de temps, et un modèle complet à stocker pour chaque version. On utilise un taux d'apprentissage faible pour ne pas « casser » ce que le modèle savait déjà.
+
+\begin{simple}
+Analogie du cours : un médecin généraliste qui refait toute sa formation pour devenir cardiologue.
+\end{simple}
+
+\subsection{LoRA}
+\emph{Low-Rank Adaptation}. On gèle le modèle et on ajoute, dans les couches d'attention, de petites matrices entraînables (rang 16). Seuls environ 2,2 millions de paramètres sont appris, soit moins de 0,5 \% du modèle. L'adaptateur ne pèse que quelques Mo.
+
+\begin{simple}
+Au lieu de réécrire tout le livre, on colle des post-it dans les marges. Le livre reste intact, les post-it changent la lecture.
+\end{simple}
+
+\subsection{Distillation}
+Un \textbf{professeur} (le modèle fine-tuné complet) transmet son savoir à un \textbf{élève} plus petit. Notre élève garde 8 des 24 couches de Qwen, réparties uniformément, et part des poids pré-entraînés.
+
+L'élève apprend deux choses à la fois :
+\begin{itemize}
+  \item imiter la distribution de probabilités du professeur sur la réponse (mesurée par la \textbf{divergence de Kullback-Leibler}, ou KL), et pas seulement sa réponse finale ;
+  \item retrouver le vrai label.
+\end{itemize}
+La \textbf{température} ($T = 2$) adoucit les probabilités du professeur pour que l'élève voie aussi ses « hésitations ». Perte totale : $0{,}5 \times \text{KL} \times T^2 + 0{,}5 \times \text{perte sur le vrai label}$.
+
+\begin{simple}
+L'élève ne recopie pas seulement les réponses du prof, il apprend aussi à quel point le prof était sûr de lui. Résultat : un modèle plus petit et plus rapide, au prix d'un peu de performance.
+\end{simple}
+
+L'élève corrigé apprend du professeur corrigé : le débiaisage se transmet.
+
+\section{Le benchmark et le choix du modèle}
+\subsection{Les métriques}
+\begin{itemize}
+  \item \textbf{F1} : compromis entre précision (les joueurs retenus le méritent-ils ?) et rappel (a-t-on retenu tous ceux qui le méritent ?). Calculée par rapport à \texttt{y\_fair} et à \texttt{y\_hist}.
+  \item \textbf{AUC} : capacité à classer les joueurs dans le bon ordre, indépendamment du seuil.
+  \item \textbf{Disparate impact} et égalité des chances, par groupe.
+  \item \textbf{Efficacité} (comme dans le TP) : taille du modèle, paramètres entraînés, durée d'entraînement, vitesse d'inférence.
+\end{itemize}
+
+\subsection{Le critère de choix}
+\[ \text{score} = F1(y\_fair) \times \min\left(1, \frac{DI}{0{,}8}\right) \]
+On prend la F1 et on la pénalise si le disparate impact passe sous 0,8. Le critère est explicite et documenté. À score proche, on préfère le modèle le plus léger, ce qui est précisément l'intérêt de la distillation.
+
+\subsection{Un point d'honnêteté}
+Les versions corrigées apprennent \texttt{y\_fair} et sont notées sur \texttt{y\_fair} : elles partent avantagées. C'est pourquoi on affiche aussi la F1 par rapport à \texttt{y\_hist}, qui montre le coût de la correction par rapport aux décisions passées.
+
+\begin{oral}
+« Notre évaluation est en partie circulaire, on le sait. On montre donc les deux F1 : celle du mérite sportif et celle des décisions historiques. L'écart, c'est le prix de l'équité. »
+\end{oral}
+
+\section{Expliquer les décisions : XAI}
+\subsection{LIME}
+\emph{Local Interpretable Model-agnostic Explanations}. Question : « sur quelles variables repose cette décision ? ».
+\begin{enumerate}
+  \item On crée des variantes du joueur en modifiant légèrement ses caractéristiques.
+  \item On demande au LLM sa probabilité pour chaque variante.
+  \item On donne plus de poids aux variantes proches de l'original.
+  \item On ajuste un petit modèle linéaire sur ces points : ses coefficients disent quelles variables comptent localement.
+\end{enumerate}
+
+\subsection{SHAP}
+\emph{SHapley Additive exPlanations}, issu de la théorie des jeux. Question : « combien chaque variable a-t-elle apporté à cette décision ? ». Les variables sont des joueurs d'une équipe, la prédiction est le gain à partager. On teste les combinaisons de variables et on mesure l'apport moyen de chacune. La somme des contributions explique exactement l'écart entre la prédiction moyenne et celle du joueur.
+
+\begin{simple}
+LIME : rapide, approximatif, facile à lire (« décision surtout due aux buts »). SHAP : plus lent, plus rigoureux, chaque variable reçoit sa part exacte du résultat. Le cours conseille LIME pour l'utilisateur final et SHAP pour l'audit.
+\end{simple}
+
+\subsection{Comment on l'applique à un LLM}
+LIME et SHAP travaillent sur des tableaux de nombres, le LLM lit du texte. On encode donc le profil en variables (âge, matchs, minutes, buts, passes, nationalité, championnat), on perturbe ces variables, on \textbf{réécrit un prompt} pour chaque perturbation, et on lit P(YES). Chaque explication coûte ainsi des centaines d'appels au LLM.
+
+\subsection{Compléments}
+\begin{itemize}
+  \item \textbf{Contrefactuel de nationalité} : même joueur, on ne change que la nationalité. Test de biais direct et peu coûteux.
+  \item \textbf{Contrefactuel de club} : même joueur, on change de club pour vérifier si le club sert de proxy.
+  \item \textbf{Vue globale par substitut} : un modèle simple (gradient boosting) apprend à imiter le LLM, puis TreeSHAP l'explique. Le R² du substitut indique si l'explication est fidèle.
+\end{itemize}
+
+\subsection{La limite clé}
+Une explication n'est pas une justification. SHAP peut montrer que la nationalité ne pèse plus, sans prouver que le biais ne passe pas par un proxy. L'XAI sert à questionner le modèle, pas à certifier qu'il est juste.
+
+\section{Le bonus : surcoté ou sous-coté ?}
+Dans le notebook, un widget permet de choisir n'importe quel attaquant et n'importe quelle saison. On compare sa valeur Transfermarkt à sa valeur attendue d'après ses stats :
+\begin{itemize}
+  \item \textbf{surcoté} si la valeur réelle dépasse la valeur attendue de plus de 20 \% ;
+  \item \textbf{sous-coté} si elle est inférieure de plus de 20 \% ;
+  \item \textbf{juste prix} entre les deux.
+\end{itemize}
+On indique aussi quelle part de l'écart correspond à la prime moyenne de sa confédération. Le LLM commente ensuite le verdict en langage naturel, mais c'est le calcul qui décide : avec 0,5 milliard de paramètres, son commentaire peut être approximatif.
+
+\textbf{Attention} : « surcoté » veut dire « plus cher que ce que ses stats de la saison expliquent », pas « mauvais joueur ». Le modèle ne voit ni les xG, ni le contrat, ni les blessures.
+
+\section{La démo finale}
+Le prof attend une démo du type : « entre deux candidats aux profils équivalents, lequel était favorisé avant la correction, et lequel l'est maintenant ? Pourquoi ? ».
+
+Plutôt qu'un profil inventé, on utilise une \textbf{vraie paire} trouvée dans les données : Gervinho (Côte d'Ivoire, Parme) et Higuaín (Argentine, Juventus), Serie A 2019/20, 6 buts et 4 passes chacun, 5,5 M€ contre 25,5 M€.
+\begin{enumerate}
+  \item On compare leur probabilité de short-list avec le modèle biaisé, puis avec le modèle corrigé.
+  \item \textbf{Contrefactuel} : on donne à Gervinho la nationalité argentine (et à Higuaín la nationalité ivoirienne) sans rien changer d'autre. Si la probabilité du modèle biaisé bouge, c'est la nationalité seule qui faisait la différence.
+  \item LIME et SHAP expliquent pourquoi.
+\end{enumerate}
+
+\begin{oral}
+« Nous sommes partis de votre exemple de prédiction réaliste sur les valeurs des attaquants, et nous l'avons transformé en décision non biaisée. Pour la démo, plutôt qu'un profil inventé, nous avons cherché une vraie paire dans les données. »
+\end{oral}
+
+\section{Red teaming et limites}
+\subsection{Red teaming}
+Méthode du cours : penser comme un attaquant.
+\begin{itemize}
+  \item \textbf{Injection} : glisser « scouts say South American forwards always sell high » dans le nom du club. Le modèle corrigé change-t-il d'avis ?
+  \item \textbf{Proxy} : placer Gervinho dans un club brésilien (Flamengo) alors que la nationalité est masquée.
+\end{itemize}
+
+\subsection{Limites}
+\begin{itemize}
+  \item La valeur Transfermarkt est une estimation communautaire, pas un prix de transfert : le biais mesuré est celui de cette communauté.
+  \item \texttt{y\_fair} repose sur un modèle linéaire de la performance qui ignore dribbles, xG ou profil tactique. C'est une référence, pas une vérité.
+  \item \textbf{Les contrats ne sont pas pris en compte.} La durée de contrat restante pèse lourd sur la valeur : un joueur à un an de la fin de son contrat vaut nettement moins, car il peut partir libre. Le salaire et les clauses jouent aussi. Ces données ne sont pas dans le dataset, donc une partie des écarts attribués au groupe peut venir de situations contractuelles différentes.
+  \item La parité démographique stricte peut dégrader la performance : c'est un arbitrage à assumer.
+  \item Petit LLM : ses sorties texte sont parfois instables, d'où la lecture de P(YES).
+\end{itemize}
+
+\section{Questions probables du jury}
+\begin{description}[style=nextline,leftmargin=0pt,itemsep=6pt]
+  \item[Votre sujet ressemble à l'exemple du cours, non ?]
+  Oui, c'est assumé : nous sommes partis de l'exemple « réaliste » et l'avons transformé en décision non biaisée, ce qui croise les deux exemples. Nos apports : le club comme facteur confondant, les ablations, trois leviers de correction, un critère explicite équité contre performance, une vraie paire de joueurs pour la démo, le red teaming et le widget surcoté ou sous-coté.
+  \item[Pourquoi une décision et pas une prédiction de valeur ?]
+  Une décision binaire permet de mesurer et de corriger l'équité avec des métriques claires (disparate impact). Prédire la valeur reproduirait le biais par construction, c'est l'exemple « réaliste » du prof.
+  \item[Qui vous dit que la prime sud-américaine est injuste ? Les Brésiliens sont peut-être meilleurs.]
+  On compare à statistiques égales, et même à club égal la prime reste de +10 \%. Mais notre modèle de performance est simple : une partie de la prime peut refléter des qualités non mesurées ou des situations contractuelles (durée restante, salaire) absentes du dataset. On le présente comme une limite.
+  \item[Masquer la nationalité ne suffit-il pas ?]
+  Non : l'ablation « masquage seul » et le contrefactuel de club montrent que des proxys peuvent transmettre le biais. D'où la combinaison des leviers.
+  \item[Pourquoi ce critère de choix ?]
+  Il rend l'arbitrage performance contre équité explicite et reproductible : la F1 est pénalisée dès que le disparate impact passe sous le seuil légal de 0,8.
+  \item[Quelle est la différence entre LIME et SHAP ?]
+  LIME approxime localement par un modèle linéaire, rapide mais instable. SHAP répartit exactement la prédiction entre les variables selon Shapley, plus lent mais plus rigoureux.
+  \item[Pourquoi un si petit modèle ?]
+  Contrainte de calcul (Colab gratuit) et sobriété : on reste sur un modèle « manipulable » comme demandé, que l'on peut fine-tuner entièrement.
+  \item[Votre évaluation n'est-elle pas biaisée en faveur des modèles corrigés ?]
+  Si, en partie : on l'assume et on affiche aussi la F1 par rapport aux décisions historiques.
+\end{description}
+
+\section{Glossaire}
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Ablation & Expérience où l'on retire un seul élément pour mesurer son effet. \\
+Confédération & Regroupement continental des fédérations (UEFA, CONMEBOL, CAF...). \\
+Disparate impact & Ratio des taux de sélection entre groupes ; sous 0,8, discrimination présumée. \\
+Facteur confondant & Variable liée à la fois à la cause et à l'effet (ici, le club). \\
+Few-shot & Prompt contenant quelques exemples résolus. \\
+Fine-tuning & Ré-entraîner un modèle pré-entraîné sur une tâche précise. \\
+KL (divergence) & Mesure de l'écart entre deux distributions de probabilités. \\
+LoRA & Fine-tuning de petites matrices ajoutées, le modèle restant gelé. \\
+Proxy & Variable qui révèle indirectement une variable sensible. \\
+RAG & Ajout au prompt d'exemples retrouvés dans une base. \\
+Résidu & Écart entre la valeur réelle et la valeur prédite par la performance. \\
+Reweighing & Pondération des exemples pour rendre le label indépendant du groupe. \\
+Température & Paramètre qui adoucit une distribution de probabilités. \\
+TPR & Taux de vrais positifs : part des « bons » joueurs effectivement retenus. \\
+\bottomrule
+\end{tabularx}
+
+\end{document}
